@@ -1,0 +1,13 @@
+streamlit>=1.32
+altair>=5.0
+pandas>=2.0
+openpyxl>=3.1
+Pillow>=10.0
+matplotlib>=3.7
+arabic-reshaper>=3.0
+python-bidi>=0.4
+fonttools>=4.22
+# Base des signalements du support en ligne (Supabase / Neon). Inutile en
+# local : support.py n'importe psycopg que si une URL Postgres est configurée,
+# et retombe sinon sur SQLite.
+psycopg[binary]>=3.1

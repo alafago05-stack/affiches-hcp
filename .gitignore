@@ -1,0 +1,20 @@
+# Secrets — ne JAMAIS committer (contient l'URL et le mot de passe de la base)
+.streamlit/secrets.toml
+
+# Base des signalements en local
+support/tickets.db
+
+# Fichiers Excel de données (les utilisateurs déposent les leurs dans l'app ;
+# inutile de publier des données HCP dans le dépôt)
+*.xlsx
+*.xls
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Sorties de test / affiches générées
+*.png
+!hcp_logo.png

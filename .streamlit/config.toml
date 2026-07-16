@@ -1,0 +1,10 @@
+# Thème Streamlit assorti à la palette des affiches HCP (voir poster_engine.py)
+[theme]
+base = "light"
+primaryColor = "#A3B520"
+backgroundColor = "#F7F5EC"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#16323F"
+
+[server]
+maxUploadSize = 200

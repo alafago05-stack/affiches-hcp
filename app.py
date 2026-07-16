@@ -1,0 +1,1040 @@
+#!/usr/bin/env python3
+"""app.py — Interface Streamlit du générateur d'affiches HCP.
+
+Point d'entrée unique : choix du type d'affiche, upload des fichiers Excel,
+saisie des paramètres (année / jihat / trimestre / langue), génération et
+téléchargement du PNG. Toute la logique de dessin vit dans `poster_engine.py`
+(via `posters/*.py`) ; ce fichier ne fait qu'orchestrer les entrées/sorties et
+afficher des messages d'erreur clairs (jamais de traceback brut).
+
+L'identité visuelle de l'interface reprend la palette des affiches
+(poster_engine.py) : fond crème #F7F5EC, marine #16323F, vert olive #A3B520,
+or #E8A13C — bannière héro, badges numérotés et cartes chiffrées calqués sur
+les sections des affiches. Les graphiques d'aperçu utilisent Altair (fourni
+avec Streamlit) avec les mêmes couleurs d'indicateurs que les courbes des
+affiches Type 2.
+
+Lancer avec :
+    streamlit run app.py
+"""
+
+import base64
+import io
+import tempfile
+import zipfile
+from datetime import datetime
+from pathlib import Path
+
+import altair as alt
+import pandas as pd
+import streamlit as st
+from PIL import Image
+
+from parsers.annual import (
+    AnnualExcelFormatError,
+    get_rate,
+    guess_region_from_filename,
+    list_years,
+    parse_ene_excel,
+    validate_blocks,
+)
+from posters import quarter_compare, region_compare, standard, year_compare
+import support
+
+# Version affichée dans le pied de page et enregistrée avec chaque signalement
+# de support (utile pour savoir sur quelle version un problème a été remonté).
+APP_VERSION = "2026.07"
+
+RENDERERS = {
+    "type1_standard": standard.render,
+    "type2_annees": year_compare.render,
+    "type3_regions": region_compare.render,
+    "type4_trimestres": quarter_compare.render,
+}
+
+# Exceptions natives levées par parse_ene_excel/get_value/get_rate (repris
+# tels quels de generate_affiche.py) — voir parsers/annual.py pour pourquoi
+# on ne les remplace pas par une exception "maison".
+DATA_ERRORS = (AnnualExcelFormatError, KeyError, ValueError)
+
+st.set_page_config(
+    page_title="Générateur d'affiches HCP",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+LANG_LABELS = {"fr": "Français", "ar": "العربية", "en": "English"}
+LANG_CODES = list(LANG_LABELS.keys())
+
+POSTER_TYPES = {
+    "standard": "📄  Type 1 — Affiche standard (une année, une région)",
+    "year": "📈  Type 2 — Comparatif entre deux années",
+    "region": "🗺️  Type 3 — Comparatif entre deux jihat (régions)",
+    "quarter": "🗓️  Type 4 — Comparatif entre trimestres",
+}
+
+RATE_LABELS = {"TA": "Taux d'activité", "TE": "Taux d'emploi", "TC": "Taux de chômage"}
+# Mêmes couleurs que les courbes de tendance des affiches Type 2
+# (posters/year_compare.py) — l'aperçu et l'affiche racontent la même histoire.
+RATE_COLORS = {"TA": "#4E9A50", "TE": "#3B6FA0", "TC": "#C44A3E"}
+
+NAVY, OLIVE, GOLD, CREAM = "#16323F", "#A3B520", "#E8A13C", "#F7F5EC"
+# Couleurs des séries des graphiques comparatifs (2 régions, jusqu'à 4 trimestres).
+SERIES_PALETTE = [NAVY, GOLD, OLIVE, "#C44A3E"]
+
+POSTER_SHORT = {
+    "type1_standard": "Type 1",
+    "type2_annees": "Type 2",
+    "type3_regions": "Type 3",
+    "type4_trimestres": "Type 4",
+}
+
+
+# ==========================================================================
+# Identité visuelle (CSS + composants HTML maison)
+# ==========================================================================
+_CSS = """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&display=swap');
+
+html, body, .stApp, .stApp * { font-family: 'Manrope', 'Segoe UI', sans-serif; }
+/* ne surtout pas écraser la police d'icônes Material de Streamlit,
+   sinon les icônes s'affichent en toutes lettres ("upload"...) */
+[data-testid="stIconMaterial"] { font-family: 'Material Symbols Rounded' !important; }
+.stApp {
+    background:
+        radial-gradient(1000px 380px at 85% -10%, rgba(163,181,32,.10), transparent 60%),
+        radial-gradient(800px 320px at -10% 0%, rgba(232,161,60,.08), transparent 55%),
+        #F7F5EC;
+}
+.block-container { padding-top: 1.6rem; max-width: 1180px; }
+h1, h2, h3 { color: #16323F; letter-spacing: -0.02em; }
+#MainMenu, footer { visibility: hidden; }
+
+/* ---- bannière héro (reprend l'en-tête des affiches) ---- */
+.hcp-hero {
+    background: linear-gradient(135deg, #16323F 0%, #1D3F4F 55%, #245063 100%);
+    border-radius: 20px; padding: 26px 30px; margin-bottom: 14px;
+    display: flex; align-items: center; justify-content: space-between; gap: 20px;
+    box-shadow: 0 10px 30px rgba(22,50,63,.22);
+    position: relative; overflow: hidden;
+}
+.hcp-hero::after {
+    content: ""; position: absolute; right: -60px; bottom: -110px;
+    width: 300px; height: 300px; border-radius: 50%;
+    border: 26px solid rgba(163,181,32,.14);
+}
+.hcp-pill {
+    display: inline-block; background: #A3B520; color: #16323F;
+    font-weight: 800; font-size: .74rem; letter-spacing: .08em;
+    text-transform: uppercase; padding: 5px 14px; border-radius: 999px;
+}
+.hcp-hero h1 { color: #fff; font-size: 2.05rem; font-weight: 800; margin: .55rem 0 .25rem; }
+.hcp-hero p  { color: #B8CBD3; margin: 0; font-size: .95rem; }
+.hcp-logo-box {
+    background: #fff; border-radius: 14px; padding: 10px 14px; flex: 0 0 auto;
+    box-shadow: 0 4px 14px rgba(0,0,0,.18); z-index: 1;
+}
+.hcp-logo-box img { height: 64px; display: block; }
+
+/* ---- badges d'étape numérotés (comme les sections des affiches) ---- */
+.hcp-step { display: flex; align-items: center; gap: .65rem; margin: 1.5rem 0 .7rem; }
+.hcp-step-num {
+    background: #16323F; color: #fff; font-weight: 800; font-size: .95rem;
+    width: 32px; height: 32px; border-radius: 50%; flex: 0 0 32px;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 0 0 3px rgba(163,181,32,.55);
+}
+.hcp-step h3 { margin: 0; font-size: 1.18rem; font-weight: 800; }
+
+/* ---- cartes chiffrées de l'aperçu ---- */
+.hcp-metrics { display: flex; gap: 14px; flex-wrap: wrap; margin: .3rem 0 .8rem; }
+.hcp-card {
+    flex: 1 1 180px; background: #fff; border: 1px solid #E6E3D4;
+    border-top: 4px solid var(--c, #A3B520); border-radius: 14px;
+    padding: 14px 18px 15px; box-shadow: 0 2px 12px rgba(22,50,63,.06);
+}
+.hcp-card .lbl { font-size: .8rem; font-weight: 700; color: #6E7F87; text-transform: uppercase; letter-spacing: .04em; }
+.hcp-card .val { font-size: 2rem; font-weight: 800; color: #16323F; line-height: 1.15; }
+.hcp-card .sub { font-size: .78rem; color: #93A1A8; margin-top: 2px; }
+.hcp-delta {
+    display: inline-block; font-size: .8rem; font-weight: 800;
+    padding: 2px 10px; border-radius: 999px; margin-top: 6px;
+}
+.hcp-delta.good { background: #E7F2E4; color: #2F7A33; }
+.hcp-delta.bad  { background: #F9E7E3; color: #B23A2C; }
+.hcp-delta.flat { background: #EFEFE6; color: #6E7F87; }
+
+/* ---- choix du type d'affiche : cartes cliquables ---- */
+label[data-testid="stRadioOption"] {
+    background: #fff; border: 1.5px solid #E6E3D4; border-radius: 13px;
+    padding: 11px 16px; margin: 0 0 8px 0; width: 100%;
+    transition: border-color .15s, box-shadow .15s, background .15s;
+}
+label[data-testid="stRadioOption"]:hover { border-color: #A3B520; }
+label[data-testid="stRadioOption"][data-selected="true"] {
+    border-color: #A3B520; background: #F6F8E8;
+    box-shadow: 0 3px 12px rgba(163,181,32,.22);
+}
+
+/* ---- boutons ---- */
+.stButton > button, .stDownloadButton > button {
+    border-radius: 11px; font-weight: 800; padding: .55rem 1.5rem;
+    border: 1.5px solid #16323F; color: #16323F; background: #fff;
+}
+.stButton > button[kind="primary"], .stButton > button[data-testid="stBaseButton-primary"] {
+    background: #A3B520; border-color: #A3B520; color: #16323F;
+    box-shadow: 0 4px 14px rgba(163,181,32,.35);
+}
+.stButton > button[kind="primary"]:hover { background: #B5C72E; border-color: #B5C72E; color: #16323F; }
+.stButton > button:disabled { opacity: .45; box-shadow: none; }
+.stDownloadButton > button { background: #16323F; color: #fff; }
+.stDownloadButton > button:hover { background: #245063; color: #fff; border-color: #245063; }
+
+/* ---- zones de dépôt, expanders, images ---- */
+[data-testid="stFileUploaderDropzone"] {
+    border: 2px dashed rgba(163,181,32,.75); background: #FCFBF4; border-radius: 14px;
+}
+[data-testid="stExpander"] {
+    background: #fff; border: 1px solid #E6E3D4 !important; border-radius: 14px !important;
+    box-shadow: 0 2px 10px rgba(22,50,63,.05);
+}
+[data-testid="stImage"] img { border-radius: 16px; box-shadow: 0 10px 34px rgba(22,50,63,.18); }
+
+/* ---- onglets FR/AR/EN du résultat ---- */
+button[data-baseweb="tab"] { font-weight: 700; color: #6E7F87; }
+button[data-baseweb="tab"][aria-selected="true"] { color: #16323F; }
+[data-baseweb="tab-highlight"] { background-color: #A3B520; height: 3px; border-radius: 3px; }
+
+/* ---- pied de page ---- */
+.hcp-footer {
+    text-align: center; color: #93A1A8; font-size: .8rem;
+    margin-top: 3rem; padding: 1.1rem 0 .4rem; border-top: 1px solid #E6E3D4;
+}
+
+/* ---- barre latérale marine (comme la section Points saillants) ---- */
+[data-testid="stSidebar"] { background: #16323F; }
+[data-testid="stSidebar"] * { color: #E9EEF0; }
+[data-testid="stSidebar"] h2 { color: #fff; font-size: 1.02rem; }
+[data-testid="stSidebar"] h2::before { content: "— "; color: #A3B520; }
+[data-testid="stSidebar"] hr { border-color: rgba(255,255,255,.14); }
+[data-testid="stSidebar"] [data-testid="stImage"] img {
+    background: #fff; border-radius: 12px; padding: 8px; box-shadow: none;
+}
+[data-testid="stSidebar"] strong { color: #C9D64A; }
+</style>
+"""
+
+
+@st.cache_data(show_spinner=False)
+def _logo_b64() -> str:
+    logo = Path(__file__).parent / "hcp_logo.png"
+    return base64.b64encode(logo.read_bytes()).decode() if logo.exists() else ""
+
+
+def _hero() -> None:
+    logo_html = (
+        f'<div class="hcp-logo-box"><img src="data:image/png;base64,{_logo_b64()}" alt="HCP"/></div>'
+        if _logo_b64()
+        else ""
+    )
+    st.markdown(
+        f"""
+        <div class="hcp-hero">
+          <div>
+            <span class="hcp-pill">Haut-Commissariat au Plan</span>
+            <h1>Générateur d'affiches — Enquête Nationale sur l'Emploi</h1>
+            <p>Affiches infographiques multilingues FR / AR / EN, fidèles à la maquette de référence.</p>
+          </div>
+          {logo_html}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _step(num: int, title: str) -> None:
+    st.markdown(
+        f'<div class="hcp-step"><span class="hcp-step-num">{num}</span><h3>{title}</h3></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _fmt_pct(v: float) -> str:
+    return f"{v:.1f}".replace(".", ",") + " %"
+
+
+def _metric_cards(cards: list[dict]) -> None:
+    """Rangée de cartes chiffrées maison. Chaque carte : {label, value, color,
+    sub (optionnel), delta (optionnel, en points), delta_inverse (True si une
+    hausse est une mauvaise nouvelle, ex. chômage)}."""
+    html = ['<div class="hcp-metrics">']
+    for c in cards:
+        delta_html = ""
+        if c.get("delta") is not None:
+            d = c["delta"]
+            if abs(d) < 0.05:
+                cls, arrow = "flat", "→"
+            else:
+                good = (d < 0) if c.get("delta_inverse") else (d > 0)
+                cls = "good" if good else "bad"
+                arrow = "▲" if d > 0 else "▼"
+            delta_html = (
+                f'<span class="hcp-delta {cls}">{arrow} {f"{d:+.1f}".replace(".", ",")} pt</span>'
+            )
+        sub_html = f'<div class="sub">{c["sub"]}</div>' if c.get("sub") else ""
+        html.append(
+            f'<div class="hcp-card" style="--c:{c.get("color", OLIVE)}">'
+            f'<div class="lbl">{c["label"]}</div>'
+            f'<div class="val">{c["value"]}</div>'
+            f"{delta_html}{sub_html}</div>"
+        )
+    html.append("</div>")
+    st.markdown("".join(html), unsafe_allow_html=True)
+
+
+def _chart_theme(chart: alt.Chart) -> alt.Chart:
+    """Habillage commun des graphiques Altair : fond transparent, axes marine,
+    grille discrète, police Manrope."""
+    return (
+        chart.configure(background="transparent", font="Manrope, Segoe UI, sans-serif")
+        .configure_axis(
+            labelColor=NAVY, titleColor=NAVY, gridColor="#E4E1D2",
+            domainColor="#CBC8B8", tickColor="#CBC8B8", labelFontSize=12, labelFontWeight=600,
+        )
+        .configure_legend(labelColor=NAVY, labelFontSize=12, labelFontWeight=700, orient="top", title=None)
+        .configure_view(strokeWidth=0)
+    )
+
+
+def _trend_chart(df: pd.DataFrame, highlight_years: list[str] | None = None) -> None:
+    """Courbe d'évolution interactive TA/TE/TC (mêmes couleurs que les
+    affiches Type 2), avec survol : point le plus proche mis en avant et
+    valeurs des trois taux affichées."""
+    long = (
+        df.rename(columns=RATE_LABELS)
+        .reset_index(names="Année")
+        .melt("Année", var_name="Indicateur", value_name="Taux")
+        .dropna(subset=["Taux"])
+    )
+    color = alt.Color(
+        "Indicateur:N",
+        scale=alt.Scale(
+            domain=[RATE_LABELS[c] for c in ("TA", "TE", "TC")],
+            range=[RATE_COLORS[c] for c in ("TA", "TE", "TC")],
+        ),
+    )
+    hover = alt.selection_point(fields=["Année"], nearest=True, on="pointerover", empty=False)
+    base = alt.Chart(long).encode(
+        x=alt.X("Année:O", title=None, axis=alt.Axis(labelAngle=0)),
+        y=alt.Y("Taux:Q", title="%", scale=alt.Scale(zero=False, padding=12)),
+        color=color,
+    )
+    lines = base.mark_line(strokeWidth=3, interpolate="monotone")
+    points = base.mark_circle(size=70).encode(
+        opacity=alt.condition(hover, alt.value(1), alt.value(0.55)),
+        size=alt.condition(hover, alt.value(160), alt.value(70)),
+        tooltip=[
+            alt.Tooltip("Année:O"),
+            alt.Tooltip("Indicateur:N"),
+            alt.Tooltip("Taux:Q", format=".1f", title="Taux (%)"),
+        ],
+    ).add_params(hover)
+    layers = [lines, points]
+    if highlight_years:
+        # Règles verticales sur les années comparées (Type 2).
+        rules = (
+            alt.Chart(pd.DataFrame({"Année": [str(y) for y in highlight_years]}))
+            .mark_rule(strokeDash=[5, 4], stroke=GOLD, strokeWidth=2)
+            .encode(x="Année:O")
+        )
+        layers.insert(0, rules)
+    chart = _chart_theme(alt.layer(*layers).properties(height=290))
+    st.altair_chart(chart, width="stretch", theme=None)
+    st.caption(
+        "Évolution des trois taux (Ensemble) sur toutes les années exploitables du fichier — "
+        "survolez les points pour lire les valeurs exactes."
+    )
+
+
+def _compare_bar_chart(rows: list[dict], series_name: str = "Région") -> None:
+    """Barres groupées horizontales (2 régions ou 2 à 4 trimestres), valeurs
+    affichées au bout des barres — même logique visuelle que les barres
+    comparatives des affiches Type 3/4. `rows` : [{Indicateur, <series_name>,
+    Taux}]."""
+    df = pd.DataFrame(rows).dropna(subset=["Taux"])
+    if df.empty:
+        return
+    series = list(dict.fromkeys(df[series_name]))
+    color = alt.Color(
+        f"{series_name}:N",
+        scale=alt.Scale(domain=series, range=SERIES_PALETTE[: len(series)]),
+    )
+    base = alt.Chart(df).encode(
+        y=alt.Y("Indicateur:N", title=None, sort=list(RATE_LABELS.values())),
+        yOffset=f"{series_name}:N",
+        x=alt.X("Taux:Q", title="%", scale=alt.Scale(padding=14)),
+        color=color,
+        tooltip=[
+            alt.Tooltip(f"{series_name}:N"),
+            alt.Tooltip("Indicateur:N"),
+            alt.Tooltip("Taux:Q", format=".1f", title="Taux (%)"),
+        ],
+    )
+    bars = base.mark_bar(cornerRadiusEnd=5, height=15)
+    labels = base.mark_text(align="left", dx=5, fontWeight=700, fontSize=11.5, color=NAVY).encode(
+        text=alt.Text("Taux:Q", format=".1f")
+    )
+    # Hauteur adaptée au nombre de séries (3 indicateurs × N barres).
+    chart = _chart_theme((bars + labels).properties(height=100 + 55 * len(series)))
+    st.altair_chart(chart, width="stretch", theme=None)
+
+
+# ==========================================================================
+# Helpers (parsing avec cache, aperçu des données, génération mono/multilingue)
+# ==========================================================================
+@st.cache_data(show_spinner=False)
+def _cached_parse(file_bytes: bytes, year: str) -> dict:
+    """Parse une feuille-année depuis les octets du fichier uploadé. Le cache
+    évite de relire le classeur à chaque interaction Streamlit."""
+    return parse_ene_excel(io.BytesIO(file_bytes), year)
+
+
+@st.cache_data(show_spinner=False)
+def _rates_over_years(file_bytes: bytes) -> pd.DataFrame:
+    """TA/TE/TC (Ensemble) pour chaque feuille-année exploitable du fichier —
+    alimente l'aperçu chiffré et la courbe d'évolution. Les feuilles au format
+    incompatible sont simplement omises."""
+    try:
+        years = list_years(io.BytesIO(file_bytes))
+    except AnnualExcelFormatError:
+        return pd.DataFrame()
+    data = {}
+    for yr in sorted(years, key=int):
+        try:
+            blocks = _cached_parse(file_bytes, yr)
+            row = {}
+            for code in RATE_LABELS:
+                _, pct = get_rate(blocks, code)
+                row[code] = pct
+            data[yr] = row
+        except Exception:
+            continue
+    return pd.DataFrame.from_dict(data, orient="index")
+
+
+def _evolution_phrase(code: str, delta: float) -> str:
+    """Décrit en français l'évolution d'un taux (hausse/baisse/stabilité) sur
+    l'écart en points fourni — formulation neutre, réutilisable telle quelle
+    dans les points saillants de l'affiche."""
+    label = RATE_LABELS[code].lower()
+    pts = f"{abs(delta):.1f}".replace(".", ",")
+    if abs(delta) < 0.05:
+        return f"le {label} est resté stable"
+    sens = "progressé" if delta > 0 else "reculé"
+    return f"le {label} a {sens} de {pts} point{'s' if abs(delta) >= 2 else ''}"
+
+
+def _auto_reading(df: pd.DataFrame, ref_year: str, prev_year: str = None) -> list[str]:
+    """Lecture automatique des données : 2 à 4 phrases factuelles décrivant les
+    niveaux de l'année de référence, leur évolution depuis l'année comparée, et
+    les extrêmes de la série. Pensée comme aide à la rédaction des points
+    saillants — l'utilisateur peut les copier telles quelles."""
+    bullets = []
+    if ref_year not in df.index:
+        return bullets
+    ta, te, tc = (df.loc[ref_year, c] for c in ("TA", "TE", "TC"))
+    if pd.notna(ta) and pd.notna(tc):
+        bullets.append(
+            f"En **{ref_year}**, le taux d'activité s'établit à **{_fmt_pct(ta)}** et le taux de "
+            f"chômage à **{_fmt_pct(tc)}** (ensemble, urbain et rural confondus)."
+        )
+    if prev_year and prev_year in df.index and prev_year != ref_year:
+        parts = []
+        for code in ("TA", "TE", "TC"):
+            cur, prev = df.loc[ref_year, code], df.loc[prev_year, code]
+            if pd.notna(cur) and pd.notna(prev):
+                parts.append(_evolution_phrase(code, float(cur - prev)))
+        if parts:
+            bullets.append(
+                f"Entre **{prev_year}** et **{ref_year}**, " + ", ".join(parts) + "."
+            )
+    # Extrêmes de la série sur le chômage (indicateur le plus suivi).
+    tc_series = df["TC"].dropna()
+    if len(tc_series) >= 3:
+        hi, lo = tc_series.idxmax(), tc_series.idxmin()
+        if hi != lo:
+            bullets.append(
+                f"Sur l'ensemble des années disponibles, le chômage a culminé en **{hi}** "
+                f"({_fmt_pct(tc_series[hi])}) et atteint son plus bas en **{lo}** "
+                f"({_fmt_pct(tc_series[lo])})."
+            )
+    return bullets
+
+
+def _indicators_csv(df: pd.DataFrame) -> bytes:
+    """Exporte les indicateurs extraits (une ligne par année) en CSV UTF-8-BOM
+    — le BOM permet à Excel d'ouvrir directement le fichier avec les accents
+    corrects et les séparateurs français."""
+    out = df.rename(columns={c: f"{RATE_LABELS[c]} (%)" for c in RATE_LABELS}).copy()
+    out.index.name = "Année"
+    return out.round(1).to_csv(sep=";", decimal=",").encode("utf-8-sig")
+
+
+def _data_preview(file_bytes: bytes, year: str = None, year_a: str = None, year_b: str = None) -> None:
+    """Expander « Aperçu des données » : cartes chiffrées des 3 taux clés
+    (avec écart si l'on compare deux années), courbe d'évolution interactive,
+    lecture automatique des données et export CSV. Purement informatif :
+    permet de vérifier les chiffres AVANT de générer l'affiche."""
+    df = _rates_over_years(file_bytes)
+    with st.expander("📊 Aperçu des données du fichier", expanded=True):
+        if df.empty:
+            st.info("Aucune feuille exploitable trouvée pour l'aperçu.")
+            return
+        compare = year_a is not None and year_b is not None and year_a != year_b
+        ref_year = str(year_b) if compare else (str(year) if year is not None else None)
+        prev_year = str(year_a) if compare else None
+        if ref_year in df.index:
+            cards = []
+            for code in RATE_LABELS:
+                val = df.loc[ref_year, code]
+                if val is None or pd.isna(val):
+                    continue
+                delta = None
+                if compare and str(year_a) in df.index:
+                    prev = df.loc[str(year_a), code]
+                    if prev is not None and not pd.isna(prev):
+                        delta = float(val - prev)
+                cards.append(
+                    {
+                        "label": f"{RATE_LABELS[code]} · {ref_year}",
+                        "value": _fmt_pct(val),
+                        "color": RATE_COLORS[code],
+                        "delta": delta,
+                        "delta_inverse": code == "TC",
+                        "sub": f"depuis {year_a}" if delta is not None else "Ensemble (urbain + rural)",
+                    }
+                )
+            _metric_cards(cards)
+        if len(df) >= 2:
+            _trend_chart(df, highlight_years=[year_a, year_b] if compare else None)
+        reading = _auto_reading(df, ref_year, prev_year) if ref_year else []
+        if reading:
+            st.markdown("**📝 Lecture automatique** — à réutiliser dans les points saillants :")
+            for b in reading:
+                st.markdown(f"- {b}")
+        st.download_button(
+            "⬇️ Exporter les indicateurs (CSV)",
+            data=_indicators_csv(df),
+            file_name="indicateurs_ene.csv",
+            mime="text/csv",
+            help="Les trois taux (Ensemble) pour toutes les années exploitables, ouvrable dans Excel.",
+        )
+
+
+def _png_to_pdf(pngs: list[bytes]) -> bytes:
+    """Convertit une ou plusieurs affiches PNG en un PDF (une page par
+    affiche) — pratique pour l'impression et l'envoi officiel. Aucune
+    dépendance supplémentaire : Pillow écrit le PDF directement."""
+    imgs = [Image.open(io.BytesIO(b)).convert("RGB") for b in pngs]
+    buf = io.BytesIO()
+    imgs[0].save(buf, "PDF", save_all=True, append_images=imgs[1:], resolution=150.0)
+    return buf.getvalue()
+
+
+def _push_history(entry: dict) -> None:
+    """Ajoute une affiche à l'historique de session (les 8 dernières)."""
+    hist = st.session_state.setdefault("history", [])
+    hist.insert(0, entry)
+    del hist[8:]
+
+
+def _generate(poster_key: str, lang: str, build_spec, all_langs: bool = False, context: str = "") -> None:
+    """Rend l'affiche (dans la langue choisie, ou les 3 langues si demandé) et
+    stocke le résultat dans la session pour affichage + téléchargement, en
+    capturant toute erreur dans un message lisible. `context` décrit les
+    paramètres (année, régions…) pour l'historique de session.
+
+    `build_spec` est un callable lang -> spec : la spec dépend de la langue
+    (titres, libellés traduits), il faut donc la reconstruire par langue."""
+    try:
+        langs = LANG_CODES if all_langs else [lang]
+        results = {}
+        with st.spinner("Génération de l'affiche…" if not all_langs else "Génération des 3 langues…"):
+            for lg in langs:
+                spec = build_spec(lg)
+                out_path = str(Path(tempfile.gettempdir()) / f"affiche_{poster_key}_{lg}.png")
+                RENDERERS[poster_key](spec, lg, out_path)
+                with open(out_path, "rb") as f:
+                    results[lg] = f.read()
+        if all_langs:
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                for lg, png in results.items():
+                    zf.writestr(f"affiche_{poster_key}_{lg}.png", png)
+            st.session_state["generated_zip"] = buf.getvalue()
+            st.session_state["generated_zip_name"] = f"affiches_{poster_key}_fr_ar_en.zip"
+            st.session_state["generated_all"] = results
+        else:
+            st.session_state.pop("generated_zip", None)
+            st.session_state.pop("generated_all", None)
+        st.session_state["generated_png"] = results[lang]
+        st.session_state["generated_name"] = f"affiche_{poster_key}_{lang}.png"
+        st.session_state["generated_key"] = poster_key
+        st.session_state["generated_lang"] = lang
+        st.session_state.pop("generation_error", None)
+        lang_label = "FR + AR + EN" if all_langs else LANG_LABELS[lang]
+        _push_history(
+            {
+                "label": " · ".join(x for x in (POSTER_SHORT[poster_key], context, lang_label) if x),
+                "time": datetime.now().strftime("%H:%M"),
+                "png": results[lang],
+                "name": f"affiche_{poster_key}_{lang}.png",
+            }
+        )
+    except DATA_ERRORS as exc:
+        st.session_state["generation_error"] = str(exc)
+        st.session_state.pop("generated_png", None)
+        st.session_state.pop("generated_zip", None)
+        st.session_state.pop("generated_all", None)
+    except Exception as exc:  # garde-fou : jamais de traceback brut à l'écran
+        st.session_state["generation_error"] = f"Erreur inattendue lors de la génération : {exc}"
+        st.session_state.pop("generated_png", None)
+        st.session_state.pop("generated_zip", None)
+        st.session_state.pop("generated_all", None)
+
+
+def _check_file_data(file_bytes: bytes, year: str, label: str = "") -> bool:
+    """Valide AVANT génération que la feuille `year` contient toutes les
+    données requises par les affiches (TA/TE/TC, sous-emploi, population en
+    âge de travailler…). Affiche la liste exacte de ce qui manque et retourne
+    False sinon — le bouton « Générer » est alors désactivé."""
+    try:
+        blocks = _cached_parse(file_bytes, year)
+    except DATA_ERRORS as exc:
+        st.error(f"{label}Feuille {year} illisible : {exc}")
+        return False
+    missing = validate_blocks(blocks)
+    if missing:
+        st.error(
+            f"{label}Ce fichier ne contient pas toutes les données requises "
+            f"pour la feuille **{year}** :\n\n- " + "\n- ".join(missing)
+        )
+        return False
+    return True
+
+
+def _read_years(uploaded_file):
+    """Liste les années disponibles dans un fichier uploadé, en gérant
+    proprement les erreurs de format."""
+    try:
+        uploaded_file.seek(0)
+        return list_years(uploaded_file), None
+    except AnnualExcelFormatError as exc:
+        return [], str(exc)
+
+
+def _parse_years_in_range(file_bytes: bytes, year_a: str, year_b: str) -> dict:
+    """Parse toutes les feuilles-années entre year_a et year_b (bornes
+    incluses), en ignorant silencieusement celles dont le format de feuille
+    est incompatible (comme le fait la CLI de référence) — utilisé pour les
+    courbes de tendance du Type 2."""
+    y0, y1 = sorted([int(year_a), int(year_b)])
+    try:
+        all_years = list_years(io.BytesIO(file_bytes))
+    except AnnualExcelFormatError:
+        return {}
+    blocks_by_year = {}
+    for yr in all_years:
+        if y0 <= int(yr) <= y1:
+            try:
+                blocks_by_year[yr] = _cached_parse(file_bytes, yr)
+            except Exception:
+                continue  # feuille présente mais format incompatible : on l'ignore
+    return blocks_by_year
+
+
+# ==========================================================================
+# Mise en page
+# ==========================================================================
+st.markdown(_CSS, unsafe_allow_html=True)
+
+with st.sidebar:
+    _logo = Path(__file__).parent / "hcp_logo.png"
+    if _logo.exists():
+        st.image(str(_logo), width=96)
+    nav_page = st.radio(
+        "Navigation",
+        options=["generator", "support"],
+        format_func=lambda k: {"generator": "🎨 Générateur d'affiches", "support": "💬 Support"}[k],
+        key="nav_page",
+    )
+    st.divider()
+    st.markdown("## Mode d'emploi")
+    st.markdown(
+        "1. Choisissez le **type d'affiche**\n"
+        "2. Choisissez la **langue** (ou activez « 3 langues » pour tout générer d'un coup)\n"
+        "3. Déposez le(s) **fichier(s) Excel** ENE\n"
+        "4. Vérifiez les chiffres dans l'**aperçu des données**\n"
+        "5. Cliquez sur **Générer l'affiche** puis téléchargez le PNG"
+    )
+    st.divider()
+    st.markdown("## Fichiers acceptés")
+    st.markdown(
+        "Exports Excel **« ENE — Indicateurs désagrégés »** (une feuille par année). "
+        "Les trois variantes de mise en page des feuilles (2019-2020, 2021, 2022-2025) "
+        "sont prises en charge, ainsi que les fichiers légèrement désordonnés "
+        "(colonnes décalées, titres mal formatés, nombres en texte)."
+    )
+    st.divider()
+    st.caption(
+        "Haut-Commissariat au Plan — Enquête Nationale sur l'Emploi. "
+        "Affiches générées en FR / AR / EN, fidèles à la maquette de référence."
+    )
+
+_hero()
+
+# La page « Support » (chatbot + suivi des signalements) remplace le
+# générateur : on l'affiche puis on arrête le script pour ne pas dérouler
+# toute l'interface de génération en dessous.
+if nav_page == "support":
+    support.render(APP_VERSION)
+    st.markdown(
+        f'<div class="hcp-footer">Haut-Commissariat au Plan — Enquête Nationale sur l\'Emploi · '
+        f"Générateur d'affiches multilingues · v{APP_VERSION}</div>",
+        unsafe_allow_html=True,
+    )
+    st.stop()
+
+_step(1, "Choisissez un type d'affiche")
+poster_type = st.radio(
+    "Type d'affiche",
+    options=list(POSTER_TYPES.keys()),
+    format_func=lambda k: POSTER_TYPES[k],
+    label_visibility="collapsed",
+)
+
+_step(2, "Langue de l'affiche")
+col_lang, col_multi = st.columns([1, 2])
+with col_lang:
+    lang = st.selectbox(
+        "Langue",
+        options=LANG_CODES,
+        format_func=lambda c: LANG_LABELS[c],
+        label_visibility="collapsed",
+    )
+with col_multi:
+    all_langs = st.toggle(
+        "🌍 Générer les 3 langues d'un coup (téléchargement ZIP)",
+        help="Génère l'affiche en français, arabe et anglais en un clic. "
+        "L'aperçu affiche la langue sélectionnée à gauche ; le ZIP contient les trois PNG.",
+    )
+
+_step(3, "Paramètres et données")
+
+# ==========================================================================
+# TYPE 1 — Affiche standard
+# ==========================================================================
+if poster_type == "standard":
+    excel_file = st.file_uploader("Fichier Excel (ENE-Indicateurs désagrégés)", type=["xlsx"], key="std_file")
+    years, err = ([], None)
+    if excel_file is not None:
+        years, err = _read_years(excel_file)
+    if err:
+        st.error(err)
+
+    year = st.selectbox("Année (alimente les chiffres de l'affiche)", options=years) if years else None
+    st.caption("Le titre et le texte d'introduction restent ceux du modèle de référence (Souss-Massa, 2025) ; seules les valeurs des indicateurs proviennent de l'année choisie ici.")
+
+    data_ok = False
+    if excel_file is not None and years and year is not None:
+        _data_preview(excel_file.getvalue(), year=year)
+        data_ok = _check_file_data(excel_file.getvalue(), year)
+
+    ready = excel_file is not None and year is not None and data_ok
+    if st.button("✨ Générer l'affiche", disabled=not ready, type="primary"):
+        try:
+            blocks = _cached_parse(excel_file.getvalue(), year)
+            _generate("type1_standard", lang, lambda lg: standard.build_spec(blocks, lg), all_langs, context=str(year))
+        except DATA_ERRORS as exc:
+            st.session_state["generation_error"] = str(exc)
+            st.session_state.pop("generated_png", None)
+
+# ==========================================================================
+# TYPE 2 — Comparatif entre deux années
+# ==========================================================================
+elif poster_type == "year":
+    excel_file = st.file_uploader("Fichier Excel (ENE-Indicateurs désagrégés)", type=["xlsx"], key="yr_file")
+    years, err = ([], None)
+    if excel_file is not None:
+        years, err = _read_years(excel_file)
+    if err:
+        st.error(err)
+
+    col1, col2 = st.columns(2)
+    with col1:
+        year_a = st.selectbox("Première année", options=years, key="yr_a") if years else None
+    with col2:
+        year_b = st.selectbox("Deuxième année", options=years, key="yr_b") if years else None
+
+    if years and year_a == year_b:
+        st.warning("Les deux années sélectionnées sont identiques : choisissez deux années différentes pour une comparaison utile.")
+    st.caption("La courbe de tendance couvre toutes les années entre les deux bornes choisies (celles au format incompatible sont simplement omises).")
+
+    data_ok = False
+    if excel_file is not None and years and year_a is not None and year_b is not None:
+        _data_preview(excel_file.getvalue(), year_a=year_a, year_b=year_b)
+        fb = excel_file.getvalue()
+        data_ok = _check_file_data(fb, year_a) and _check_file_data(fb, year_b)
+
+    ready = excel_file is not None and year_a is not None and year_b is not None and data_ok
+    if st.button("✨ Générer l'affiche", disabled=not ready, type="primary"):
+        try:
+            blocks_by_year = _parse_years_in_range(excel_file.getvalue(), year_a, year_b)
+            if str(year_a) not in blocks_by_year or str(year_b) not in blocks_by_year:
+                raise AnnualExcelFormatError(
+                    "Les feuilles des deux années choisies doivent être présentes et au format compatible."
+                )
+            _generate(
+                "type2_annees",
+                lang,
+                lambda lg: year_compare.build_spec(blocks_by_year, year_a, year_b, lg),
+                all_langs,
+                context=f"{year_a} → {year_b}",
+            )
+        except DATA_ERRORS as exc:
+            st.session_state["generation_error"] = str(exc)
+            st.session_state.pop("generated_png", None)
+
+# ==========================================================================
+# TYPE 3 — Comparatif entre deux jihat (régions)
+# ==========================================================================
+elif poster_type == "region":
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("**Région A**")
+        file_a = st.file_uploader("Fichier Excel — région A", type=["xlsx"], key="rg_file_a")
+        region_a_default = guess_region_from_filename(file_a.name) if file_a is not None else ""
+        region_a = st.text_input("Nom de la région A", value=region_a_default, key="rg_region_a")
+    with col2:
+        st.markdown("**Région B**")
+        file_b = st.file_uploader("Fichier Excel — région B", type=["xlsx"], key="rg_file_b")
+        region_b_default = guess_region_from_filename(file_b.name) if file_b is not None else ""
+        region_b = st.text_input("Nom de la région B", value=region_b_default, key="rg_region_b")
+
+    years_common, err_a, err_b = [], None, None
+    if file_a is not None:
+        years_a, err_a = _read_years(file_a)
+    else:
+        years_a = []
+    if file_b is not None:
+        years_b, err_b = _read_years(file_b)
+    else:
+        years_b = []
+    if err_a:
+        st.error(f"Fichier région A : {err_a}")
+    if err_b:
+        st.error(f"Fichier région B : {err_b}")
+    if years_a and years_b:
+        years_common = sorted(set(years_a) & set(years_b), reverse=True)
+        if not years_common:
+            st.error("Aucune année commune entre les deux fichiers Excel fournis.")
+
+    year = st.selectbox("Année (commune aux deux régions)", options=years_common) if years_common else None
+
+    # Aperçu comparatif : les 3 taux clés côte à côte pour l'année choisie.
+    if year is not None:
+        try:
+            blocks_a_prev = _cached_parse(file_a.getvalue(), year)
+            blocks_b_prev = _cached_parse(file_b.getvalue(), year)
+            name_a, name_b = region_a or "Région A", region_b or "Région B"
+            rows = []
+            for code, label in RATE_LABELS.items():
+                _, pa = get_rate(blocks_a_prev, code)
+                _, pb = get_rate(blocks_b_prev, code)
+                rows.append({"Indicateur": label, "Région": name_a, "Taux": pa})
+                rows.append({"Indicateur": label, "Région": name_b, "Taux": pb})
+            with st.expander(f"📊 Aperçu comparatif — {year}", expanded=True):
+                _compare_bar_chart(rows)
+        except Exception:
+            pass  # aperçu purement informatif : l'erreur ressortira à la génération
+
+    data_ok = False
+    if year is not None:
+        data_ok = _check_file_data(file_a.getvalue(), year, label="Région A — ") and _check_file_data(
+            file_b.getvalue(), year, label="Région B — "
+        )
+
+    ready = file_a is not None and file_b is not None and year is not None and data_ok
+    if st.button("✨ Générer l'affiche", disabled=not ready, type="primary"):
+        try:
+            blocks_a = _cached_parse(file_a.getvalue(), year)
+            blocks_b = _cached_parse(file_b.getvalue(), year)
+            _generate(
+                "type3_regions",
+                lang,
+                lambda lg: region_compare.build_spec(
+                    blocks_a, blocks_b, region_a or "Région A", region_b or "Région B", year, lg
+                ),
+                all_langs,
+                context=f"{region_a or 'Région A'} vs {region_b or 'Région B'} ({year})",
+            )
+        except DATA_ERRORS as exc:
+            st.session_state["generation_error"] = str(exc)
+            st.session_state.pop("generated_png", None)
+
+# ==========================================================================
+# TYPE 4 — Comparatif entre trimestres
+# ==========================================================================
+else:
+    st.caption(
+        "Chaque trimestre est un fichier Excel séparé, parsé avec la même feuille/année "
+        "que les fichiers annuels. T1 est obligatoire ; fournissez au moins T2 pour "
+        "générer une comparaison (jusqu'à T4)."
+    )
+    quarter_files = {}
+    cols = st.columns(4)
+    for i, (col, label) in enumerate(zip(cols, ["T1", "T2", "T3", "T4"]), start=1):
+        with col:
+            f = st.file_uploader(f"Fichier Excel — {label}", type=["xlsx"], key=f"qt_t{i}")
+            if f is not None:
+                quarter_files[label] = f
+
+    years_common = []
+    errs = []
+    per_file_years = {}
+    for label, f in quarter_files.items():
+        yrs, err = _read_years(f)
+        if err:
+            errs.append(f"{label} : {err}")
+        else:
+            per_file_years[label] = set(yrs)
+    for e in errs:
+        st.error(e)
+    if per_file_years:
+        years_common = sorted(set.intersection(*per_file_years.values()), reverse=True) if len(per_file_years) > 1 else sorted(per_file_years[next(iter(per_file_years))], reverse=True)
+        if not years_common:
+            st.error("Aucune année/feuille commune entre les fichiers trimestriels fournis.")
+
+    year = st.selectbox("Année (feuille commune à tous les trimestres)", options=years_common) if years_common else None
+
+    # Aperçu comparatif : les 3 taux clés par trimestre pour l'année choisie.
+    if year is not None and len(quarter_files) >= 2:
+        try:
+            rows = []
+            for lbl in ["T1", "T2", "T3", "T4"]:
+                if lbl not in quarter_files:
+                    continue
+                blocks_q = _cached_parse(quarter_files[lbl].getvalue(), year)
+                for code, label in RATE_LABELS.items():
+                    _, p = get_rate(blocks_q, code)
+                    rows.append({"Indicateur": label, "Trimestre": lbl, "Taux": p})
+            with st.expander(f"📊 Aperçu comparatif des trimestres — {year}", expanded=True):
+                _compare_bar_chart(rows, series_name="Trimestre")
+        except Exception:
+            pass  # aperçu purement informatif : l'erreur ressortira à la validation
+
+    data_ok = False
+    if year is not None and quarter_files:
+        data_ok = all(
+            _check_file_data(f.getvalue(), year, label=f"{lbl} — ") for lbl, f in quarter_files.items()
+        )
+
+    ready = "T1" in quarter_files and len(quarter_files) >= 2 and year is not None and data_ok
+    if st.button("✨ Générer l'affiche", disabled=not ready, type="primary"):
+        try:
+            labels = [lbl for lbl in ["T1", "T2", "T3", "T4"] if lbl in quarter_files]
+            blocks_list = [_cached_parse(quarter_files[lbl].getvalue(), year) for lbl in labels]
+            _generate(
+                "type4_trimestres",
+                lang,
+                lambda lg: quarter_compare.build_spec(blocks_list, labels, year, lg),
+                all_langs,
+                context=f"{'-'.join(labels)} ({year})",
+            )
+        except DATA_ERRORS as exc:
+            st.session_state["generation_error"] = str(exc)
+            st.session_state.pop("generated_png", None)
+
+# ==========================================================================
+# RÉSULTAT
+# ==========================================================================
+if st.session_state.get("generation_error"):
+    st.error(st.session_state["generation_error"])
+
+if st.session_state.get("generated_png"):
+    _step(4, "Résultat")
+    preview_lang = st.session_state.get("generated_lang", "fr")
+    poster_key = st.session_state.get("generated_key", "affiche")
+    generated_all = st.session_state.get("generated_all")
+    if generated_all:
+        st.success("Affiche générée dans les 3 langues — parcourez les onglets pour comparer.")
+        tabs = st.tabs([LANG_LABELS[lg] for lg in generated_all])
+        for tab, (lg, png) in zip(tabs, generated_all.items()):
+            with tab:
+                st.image(png)
+    else:
+        st.success(f"Affiche générée en {LANG_LABELS.get(preview_lang, preview_lang)}.")
+        st.image(st.session_state["generated_png"])
+
+    dl_cols = st.columns(4)
+    with dl_cols[0]:
+        st.download_button(
+            "⬇️ PNG",
+            data=st.session_state["generated_png"],
+            file_name=st.session_state.get("generated_name", "affiche.png"),
+            mime="image/png",
+            help="L'affiche dans la langue sélectionnée, en PNG haute résolution.",
+        )
+    with dl_cols[1]:
+        st.download_button(
+            "🖨️ PDF",
+            data=_png_to_pdf([st.session_state["generated_png"]]),
+            file_name=st.session_state.get("generated_name", "affiche.png").replace(".png", ".pdf"),
+            mime="application/pdf",
+            help="La même affiche en PDF, prête à imprimer ou à envoyer.",
+        )
+    if st.session_state.get("generated_zip"):
+        with dl_cols[2]:
+            st.download_button(
+                "📦 ZIP (3 langues)",
+                data=st.session_state["generated_zip"],
+                file_name=st.session_state.get("generated_zip_name", "affiches.zip"),
+                mime="application/zip",
+                help="Les trois PNG (FR, AR, EN) dans une archive.",
+            )
+        with dl_cols[3]:
+            st.download_button(
+                "🖨️ PDF (3 pages)",
+                data=_png_to_pdf(list(generated_all.values())),
+                file_name=f"affiches_{poster_key}_fr_ar_en.pdf",
+                mime="application/pdf",
+                help="Un seul PDF avec les trois langues : une page par langue.",
+            )
+
+# ==========================================================================
+# HISTORIQUE DE SESSION
+# ==========================================================================
+history = st.session_state.get("history", [])
+if len(history) > 1:
+    with st.expander(f"🕘 Affiches générées dans cette session ({len(history)})"):
+        st.caption("Les 8 dernières affiches restent disponibles ici tant que l'onglet est ouvert — pratique pour comparer plusieurs années ou régions sans regénérer.")
+        for row_start in range(0, len(history), 4):
+            cols = st.columns(4)
+            for col, (idx, entry) in zip(cols, enumerate(history[row_start:row_start + 4], start=row_start)):
+                with col:
+                    st.image(entry["png"], caption=f"{entry['label']} — {entry['time']}")
+                    st.download_button(
+                        "⬇️ PNG",
+                        data=entry["png"],
+                        file_name=entry["name"],
+                        mime="image/png",
+                        key=f"hist_dl_{idx}",
+                    )
+
+st.markdown(
+    f'<div class="hcp-footer">Haut-Commissariat au Plan — Enquête Nationale sur l\'Emploi · '
+    f"Générateur d'affiches multilingues · v{APP_VERSION}</div>",
+    unsafe_allow_html=True,
+)
