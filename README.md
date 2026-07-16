@@ -210,6 +210,75 @@ python generate_affiche.py regionA.xlsx --mode region_compare --excel-b regionB.
 python generate_affiche.py t1.xlsx --mode quarter_compare --sheet 2025 --q2 t2.xlsx --q3 t3.xlsx --year 2025 --lang fr --output out.png
 ```
 
+## 6. Mettre l'application en ligne (Streamlit Community Cloud)
+
+⚠️ **Vercel ne peut pas héberger cette application.** Vercel exécute des
+fonctions *serverless* (courtes, sans état), alors que Streamlit est un
+*serveur permanent* qui garde une connexion WebSocket par utilisateur (c'est
+ce qui fait vivre `session_state`, les uploads et le ré-affichage à chaque
+clic). Les deux modèles sont incompatibles. On utilise donc **Streamlit
+Community Cloud**, gratuit et conçu pour ça.
+
+Ce dossier est déjà un dépôt git prêt à être publié (`main`), avec les
+secrets, la base locale et les fichiers Excel exclus via `.gitignore`.
+
+### Étape A — créer la base des signalements (Postgres)
+
+Le disque de Streamlit Cloud est **éphémère** : sans base externe, les
+signalements du support disparaîtraient à chaque redémarrage. Crée une base
+Postgres gratuite chez **[Supabase](https://supabase.com)** ou
+**[Neon](https://neon.tech)**, puis récupère l'URL de connexion :
+
+- Supabase : *Project Settings > Database > Connection string > URI*
+- Neon : *Dashboard > Connection Details > Connection string*
+
+Elle ressemble à `postgresql://user:motdepasse@hote:5432/base?sslmode=require`.
+La table est créée automatiquement au premier signalement — rien à faire de
+plus. Sans cette étape l'app fonctionne quand même, mais en mode SQLite
+éphémère (un avertissement s'affiche dans l'espace de suivi).
+
+### Étape B — publier le code sur GitHub
+
+Crée un dépôt vide sur GitHub (sans README ni .gitignore), puis :
+
+```bash
+cd affiches_generator/affiches_package
+git remote add origin https://github.com/TON_COMPTE/TON_DEPOT.git
+git push -u origin main
+```
+
+Le dépôt peut être **privé** : Streamlit Cloud sait déployer depuis un dépôt
+privé après autorisation GitHub. Aucun secret ni donnée HCP n'est versionné.
+
+### Étape C — déployer
+
+1. Va sur **[share.streamlit.io](https://share.streamlit.io)** et connecte-toi
+   avec ton compte GitHub.
+2. **Create app** → choisis ton dépôt, branche `main`, fichier principal
+   **`app.py`**.
+3. Dans **Advanced settings** → **Python version**, choisis **3.12** ou
+   **3.13** (le code utilise une syntaxe qui demande au minimum Python 3.10).
+4. Toujours dans **Advanced settings** → **Secrets**, colle :
+
+   ```toml
+   [postgres]
+   url = "postgresql://user:motdepasse@hote:5432/base?sslmode=require"
+   ```
+
+5. **Deploy**. Le premier build prend quelques minutes (installation des
+   dépendances). Ensuite, chaque `git push` sur `main` redéploie tout seul.
+
+### Après le déploiement
+
+- L'app est accessible à tous ceux qui ont le lien. Si elle doit rester
+  interne au HCP, regarde dans **Settings > Sharing** pour restreindre
+  l'accès à une liste d'adresses e-mail.
+- Vérifie dans **💬 Support > Espace de suivi** que le stockage affiche bien
+  « **Postgres (persistant)** » — si tu vois « SQLite local », le secret n'a
+  pas été pris en compte.
+- Les signalements se consultent depuis l'espace de suivi (statuts, export
+  CSV/JSON), et survivent désormais aux redéploiements.
+
 ## En cas d'erreur
 
 - `ModuleNotFoundError` → refais `pip install -r requirements.txt`
