@@ -72,7 +72,7 @@ EDITOR_CSS = """
     .dc-has-editor { padding-top: 0 !important; }
     body { background: #fff !important; }
     .dc-stage { padding: 0 !important; display: block !important; }
-    .dc-fiche, doc-page > div { box-shadow: none !important; margin: 0 auto !important; overflow: visible !important; }
+    .dc-fiche, doc-page > div { box-shadow: none !important; margin: 0 auto !important; }
     .dc-hover, .dc-selected { outline: none !important; }
     [contenteditable="true"]:focus { outline: none !important; background: none !important; }
     @page { size: A4 portrait; margin: 8mm; }
@@ -234,12 +234,23 @@ EDITOR_JS = r"""
     // --- impression : ajuster à une A4 (8 mm de marge) d'après la taille RÉELLE ---
     // A4 à 96 dpi = 794×1123 px ; zone utile après 8 mm de marge ≈ 734×1063 px.
     window.addEventListener('beforeprint', function () {
-      root.style.overflow = 'visible';
       var w = Math.max(root.scrollWidth, root.offsetWidth);
       var h = Math.max(root.scrollHeight, root.offsetHeight);
       root.style.zoom = Math.min(734 / w, 1063 / h, 1);
     });
     window.addEventListener('afterprint', function () { root.style.zoom = ''; });
+
+    // Le cadre garde overflow:hidden (pour découper les décorations qui
+    // débordent volontairement, ex. filigrane « 24% »). Si le VRAI contenu
+    // dépasse le bas (comme la fiche « Situation »), on agrandit le cadre
+    // pour ne rien couper — sans exposer les décorations. Re-mesuré après le
+    // chargement des polices (qui change la hauteur du texte).
+    function fitHeight() {
+      if (root.scrollHeight > root.clientHeight + 1) root.style.height = root.scrollHeight + 'px';
+    }
+    fitHeight();
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitHeight);
+    setTimeout(fitHeight, 400);
   }
   if (document.readyState === 'complete') boot();
   else window.addEventListener('load', boot);
@@ -321,21 +332,10 @@ __EDITOR_CSS__
 """
 
 
-def _relax_root(fiche: str) -> str:
-    """Sur le <div> racine : hauteur fixe → hauteur MINIMALE et overflow
-    visible, pour que la fiche grandisse et affiche tout son contenu au lieu
-    de le couper (certains exports dépassent de quelques pixels le format A4).
-    L'impression remet ensuite le tout à l'échelle A4."""
-    m = re.search(r'style="([^"]*)"', fiche)
-    if not m:
-        return fiche
-    st = re.sub(r"height:\s*(\d+)px", r"min-height:\1px", m.group(1), count=1)
-    st = st.replace("overflow:hidden", "overflow:visible").replace("overflow: hidden", "overflow: visible")
-    return fiche[:m.start(1)] + st + fiche[m.end(1):]
-
-
 def _wrap(fiche: str, out_path, title, lang):
-    fiche = _relax_root(fiche)
+    # Le cadre garde son overflow:hidden d'origine (découpe les décorations
+    # débordantes) ; l'éditeur agrandit le cadre côté navigateur seulement si
+    # le vrai contenu dépasse (voir fitHeight dans EDITOR_JS).
     page = (_PAGE.replace("__LANG__", lang).replace("__DIR__", "rtl" if lang == "ar" else "ltr")
             .replace("__TITLE__", title).replace("__FONTS__", FONTS)
             .replace("__EDITOR_CSS__", EDITOR_CSS).replace("__EDITOR_JS__", EDITOR_JS)

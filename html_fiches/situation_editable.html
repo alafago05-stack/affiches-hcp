@@ -52,7 +52,7 @@
     .dc-has-editor { padding-top: 0 !important; }
     body { background: #fff !important; }
     .dc-stage { padding: 0 !important; display: block !important; }
-    .dc-fiche, doc-page > div { box-shadow: none !important; margin: 0 auto !important; overflow: visible !important; }
+    .dc-fiche, doc-page > div { box-shadow: none !important; margin: 0 auto !important; }
     .dc-hover, .dc-selected { outline: none !important; }
     [contenteditable="true"]:focus { outline: none !important; background: none !important; }
     @page { size: A4 portrait; margin: 8mm; }
@@ -62,7 +62,7 @@
 </head>
 <body>
   <div class="dc-stage">
-    <div class="dc-fiche" data-dc-tpl="6" style="width: 794px; min-height:1123px; background: rgb(251, 248, 241); font-family: Barlow, sans-serif; color: rgb(58, 37, 48); position: relative; overflow: visible; display: flex; flex-direction: column;">
+    <div class="dc-fiche" data-dc-tpl="6" style="width: 794px; height: 1123px; background: rgb(251, 248, 241); font-family: Barlow, sans-serif; color: rgb(58, 37, 48); position: relative; overflow: hidden; display: flex; flex-direction: column;">
 
   
   <div data-dc-tpl="7" style="position: absolute; top: -90px; left: -90px; width: 240px; height: 240px; border-radius: 50%; background: rgb(244, 235, 218);"></div>
@@ -574,12 +574,23 @@
     // --- impression : ajuster à une A4 (8 mm de marge) d'après la taille RÉELLE ---
     // A4 à 96 dpi = 794×1123 px ; zone utile après 8 mm de marge ≈ 734×1063 px.
     window.addEventListener('beforeprint', function () {
-      root.style.overflow = 'visible';
       var w = Math.max(root.scrollWidth, root.offsetWidth);
       var h = Math.max(root.scrollHeight, root.offsetHeight);
       root.style.zoom = Math.min(734 / w, 1063 / h, 1);
     });
     window.addEventListener('afterprint', function () { root.style.zoom = ''; });
+
+    // Le cadre garde overflow:hidden (pour découper les décorations qui
+    // débordent volontairement, ex. filigrane « 24% »). Si le VRAI contenu
+    // dépasse le bas (comme la fiche « Situation »), on agrandit le cadre
+    // pour ne rien couper — sans exposer les décorations. Re-mesuré après le
+    // chargement des polices (qui change la hauteur du texte).
+    function fitHeight() {
+      if (root.scrollHeight > root.clientHeight + 1) root.style.height = root.scrollHeight + 'px';
+    }
+    fitHeight();
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitHeight);
+    setTimeout(fitHeight, 400);
   }
   if (document.readyState === 'complete') boot();
   else window.addEventListener('load', boot);

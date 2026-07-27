@@ -52,7 +52,7 @@
     .dc-has-editor { padding-top: 0 !important; }
     body { background: #fff !important; }
     .dc-stage { padding: 0 !important; display: block !important; }
-    .dc-fiche, doc-page > div { box-shadow: none !important; margin: 0 auto !important; overflow: visible !important; }
+    .dc-fiche, doc-page > div { box-shadow: none !important; margin: 0 auto !important; }
     .dc-hover, .dc-selected { outline: none !important; }
     [contenteditable="true"]:focus { outline: none !important; background: none !important; }
     @page { size: A4 portrait; margin: 8mm; }
@@ -62,7 +62,7 @@
 </head>
 <body>
   <div class="dc-stage">
-    <div class="dc-fiche" dir="rtl" style="width:1000px;min-height:1640px;background:#ffffff;font-family:'Tajawal',sans-serif;color:#3d1122;display:flex;flex-direction:column;overflow:visible;">
+    <div class="dc-fiche" dir="rtl" style="width:1000px;height:1640px;background:#ffffff;font-family:'Tajawal',sans-serif;color:#3d1122;display:flex;flex-direction:column;overflow:hidden;">
 
   <div style="height:7px;background:linear-gradient(90deg,#7a1c3f 0%,#a63b5c 40%,#c19a4b 100%);flex:none;"></div>
 
@@ -572,12 +572,23 @@
     // --- impression : ajuster à une A4 (8 mm de marge) d'après la taille RÉELLE ---
     // A4 à 96 dpi = 794×1123 px ; zone utile après 8 mm de marge ≈ 734×1063 px.
     window.addEventListener('beforeprint', function () {
-      root.style.overflow = 'visible';
       var w = Math.max(root.scrollWidth, root.offsetWidth);
       var h = Math.max(root.scrollHeight, root.offsetHeight);
       root.style.zoom = Math.min(734 / w, 1063 / h, 1);
     });
     window.addEventListener('afterprint', function () { root.style.zoom = ''; });
+
+    // Le cadre garde overflow:hidden (pour découper les décorations qui
+    // débordent volontairement, ex. filigrane « 24% »). Si le VRAI contenu
+    // dépasse le bas (comme la fiche « Situation »), on agrandit le cadre
+    // pour ne rien couper — sans exposer les décorations. Re-mesuré après le
+    // chargement des polices (qui change la hauteur du texte).
+    function fitHeight() {
+      if (root.scrollHeight > root.clientHeight + 1) root.style.height = root.scrollHeight + 'px';
+    }
+    fitHeight();
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitHeight);
+    setTimeout(fitHeight, 400);
   }
   if (document.readyState === 'complete') boot();
   else window.addEventListener('load', boot);

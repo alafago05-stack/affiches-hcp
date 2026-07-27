@@ -14,7 +14,7 @@ import streamlit.components.v1 as components
 HTML_DIR = Path(__file__).parent / "html_fiches"
 
 FICHES = {
-    "situation": {"label": "📊 Situation du marché du travail (2025)", "file": "situation_editable.html", "height": 1220},
+    "situation": {"label": "📊 Situation du marché du travail (2025)", "file": "situation_editable.html", "height": 1300},
     "emo": {"label": "📈 EMO 2026 — nouvelle enquête (arabe)", "file": "emo_editable.html", "height": 1760},
     "neet": {"label": "🎓 Les jeunes NEET (2024)", "file": "neet_editable.html", "height": 2240},
 }
