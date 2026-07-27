@@ -13,10 +13,14 @@ import streamlit.components.v1 as components
 
 HTML_DIR = Path(__file__).parent / "html_fiches"
 
+# Hauteurs d'aperçu embarqué — approximatives : la fiche se met à l'échelle
+# de la largeur de l'iframe (~970px dans l'app), donc sa hauteur visible varie
+# un peu selon l'écran ; scrolling=True absorbe l'écart. NEET (1488px de large)
+# est fortement réduite, d'où une hauteur plus basse.
 FICHES = {
-    "situation": {"label": "📊 Situation du marché du travail (2025)", "file": "situation_editable.html", "height": 1300},
-    "emo": {"label": "📈 EMO 2026 — nouvelle enquête (arabe)", "file": "emo_editable.html", "height": 1760},
-    "neet": {"label": "🎓 Les jeunes NEET (2024)", "file": "neet_editable.html", "height": 2240},
+    "situation": {"label": "📊 Situation du marché du travail (2025)", "file": "situation_editable.html", "height": 1270},
+    "emo": {"label": "📈 EMO 2026 — nouvelle enquête (arabe)", "file": "emo_editable.html", "height": 1690},
+    "neet": {"label": "🎓 Les jeunes NEET (2024)", "file": "neet_editable.html", "height": 1500},
 }
 
 

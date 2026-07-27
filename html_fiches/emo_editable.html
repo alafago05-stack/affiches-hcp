@@ -571,24 +571,33 @@
 
     // --- impression : ajuster à une A4 (8 mm de marge) d'après la taille RÉELLE ---
     // A4 à 96 dpi = 794×1123 px ; zone utile après 8 mm de marge ≈ 734×1063 px.
+    // Ajuste la fiche à l'affichage :
+    //  1) hauteur — si le VRAI contenu dépasse le bas (cas « Situation »), on
+    //     agrandit le cadre pour ne rien couper (overflow:hidden garde les
+    //     décorations volontairement hors-cadre découpées, ex. filigrane 24%) ;
+    //  2) largeur — on réduit la fiche pour qu'elle tienne dans la zone
+    //     visible (les fiches larges comme NEET, 1488px, ne sont plus coupées
+    //     ni ne demandent de défilement horizontal).
+    function fitAll() {
+      root.style.zoom = '';  // mesurer en taille naturelle
+      if (root.scrollHeight > root.clientHeight + 1) root.style.height = root.scrollHeight + 'px';
+      var natW = root.offsetWidth;
+      var avail = (root.parentElement ? root.parentElement.clientWidth : window.innerWidth) - 8;
+      if (avail > 60 && natW > 0) root.style.zoom = Math.min(1, avail / natW);
+    }
+    fitAll();
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitAll);
+    setTimeout(fitAll, 400);
+    window.addEventListener('resize', fitAll);
+
+    // À l'impression : échelle A4 (8 mm de marge) d'après la taille réelle.
     window.addEventListener('beforeprint', function () {
+      root.style.zoom = '';
       var w = Math.max(root.scrollWidth, root.offsetWidth);
       var h = Math.max(root.scrollHeight, root.offsetHeight);
       root.style.zoom = Math.min(734 / w, 1063 / h, 1);
     });
-    window.addEventListener('afterprint', function () { root.style.zoom = ''; });
-
-    // Le cadre garde overflow:hidden (pour découper les décorations qui
-    // débordent volontairement, ex. filigrane « 24% »). Si le VRAI contenu
-    // dépasse le bas (comme la fiche « Situation »), on agrandit le cadre
-    // pour ne rien couper — sans exposer les décorations. Re-mesuré après le
-    // chargement des polices (qui change la hauteur du texte).
-    function fitHeight() {
-      if (root.scrollHeight > root.clientHeight + 1) root.style.height = root.scrollHeight + 'px';
-    }
-    fitHeight();
-    if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitHeight);
-    setTimeout(fitHeight, 400);
+    window.addEventListener('afterprint', fitAll);
   }
   if (document.readyState === 'complete') boot();
   else window.addEventListener('load', boot);
