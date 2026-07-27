@@ -668,10 +668,10 @@ with st.sidebar:
         st.image(str(_logo), width=96)
     nav_page = st.radio(
         "Navigation",
-        options=["generator", "editable", "support"],
+        options=["editable", "generator", "support"],  # « Fiches éditables » = page d'accueil
         format_func=lambda k: {
-            "generator": "🎨 Générateur d'affiches",
             "editable": "✏️ Fiches éditables",
+            "generator": "🎨 Générateur d'affiches",
             "support": "💬 Support",
         }[k],
         key="nav_page",
