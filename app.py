@@ -39,6 +39,7 @@ from parsers.annual import (
     validate_blocks,
 )
 from posters import quarter_compare, region_compare, standard, year_compare
+import editable_fiches
 import fiche_editor
 import support
 
@@ -667,8 +668,12 @@ with st.sidebar:
         st.image(str(_logo), width=96)
     nav_page = st.radio(
         "Navigation",
-        options=["generator", "support"],
-        format_func=lambda k: {"generator": "🎨 Générateur d'affiches", "support": "💬 Support"}[k],
+        options=["generator", "editable", "support"],
+        format_func=lambda k: {
+            "generator": "🎨 Générateur d'affiches",
+            "editable": "✏️ Fiches éditables",
+            "support": "💬 Support",
+        }[k],
         key="nav_page",
     )
     st.divider()
@@ -699,8 +704,11 @@ _hero()
 # La page « Support » (chatbot + suivi des signalements) remplace le
 # générateur : on l'affiche puis on arrête le script pour ne pas dérouler
 # toute l'interface de génération en dessous.
-if nav_page == "support":
-    support.render(APP_VERSION)
+if nav_page in ("support", "editable"):
+    if nav_page == "support":
+        support.render(APP_VERSION)
+    else:
+        editable_fiches.render()
     st.markdown(
         f'<div class="hcp-footer">Haut-Commissariat au Plan — Enquête Nationale sur l\'Emploi · '
         f"Générateur d'affiches multilingues · v{APP_VERSION}</div>",
