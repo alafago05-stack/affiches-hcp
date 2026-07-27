@@ -478,6 +478,60 @@
     function edit(el) { stopEdit(); snapshot(); el.setAttribute('contenteditable', 'true'); el.spellcheck = false; editing = el; el.focus(); }
     function removeSel() { if (!selected) return; snapshot(); var el = selected; deselect(); el.remove(); }
 
+    // --- liaison chiffre -> graphique (anneaux conic-gradient + barres CSS %) ---
+    function num(s) { var v = parseFloat((s || '').replace(/[^0-9,.\-]/g, '').replace(',', '.')); return isFinite(v) ? v : 0; }
+    function styleOf(el) { return el.getAttribute('style') || ''; }
+    function ancestorConic(el) {
+      var a = el.parentElement;
+      while (a && a !== root) { if (styleOf(a).indexOf('conic-gradient') >= 0) return a; a = a.parentElement; }
+      return null;
+    }
+    function updateDonut(donut, v) {
+      v = Math.max(0, Math.min(100, v));
+      donut.setAttribute('style', styleOf(donut).replace(/conic-gradient\(([^)]*)\)/, function (m, inner) {
+        var seg = inner.split(',');
+        var c0 = seg[0].trim().split(/\s+/)[0];
+        var c1 = (seg[1] || '#eeeeee 0% 100%').trim().split(/\s+/)[0];
+        return 'conic-gradient(' + c0 + ' 0% ' + v + '%,' + c1 + ' ' + v + '% 100%)';
+      }));
+    }
+    // dimension VARIABLE d'une barre (< 100 %) — une barre a souvent aussi
+    // width:100% (pleine largeur) qu'il ne faut pas confondre avec la hauteur.
+    function barDim(el) {
+      var s = styleOf(el), re = /(height|width):\s*([0-9.]+)%/g, m, best = null;
+      while ((m = re.exec(s))) { var v = parseFloat(m[2]); if (v < 100) best = { axis: m[1], val: v }; }
+      return best;
+    }
+    function updateBarGroup(col) {
+      var row = col.parentElement; if (!row) return;
+      var items = [];
+      [].forEach.call(row.children, function (cc) {
+        var lbl = null, bar = null, bd = null;
+        [].forEach.call(cc.querySelectorAll('*'), function (c) {
+          if (!bar) { var d = barDim(c); if (d) { bar = c; bd = d; } }
+          if (!lbl && c.children.length === 0 && /[0-9]/.test(c.textContent || '')) lbl = c;
+        });
+        if (lbl && bar) items.push({ bar: bar, axis: bd.axis, val: num(lbl.textContent) });
+      });
+      if (!items.length) return;
+      var maxV = Math.max.apply(null, items.map(function (i) { return i.val; })) || 1;
+      var full = Math.max.apply(null, items.map(function (i) { return barDim(i.bar).val; })) || 100;
+      items.forEach(function (it) {
+        var dim = (it.val / maxV * full).toFixed(1);
+        it.bar.setAttribute('style', styleOf(it.bar).replace(
+          new RegExp('(' + it.axis + ':\\s*)[0-9.]+%'), '$1' + dim + '%'));
+      });
+    }
+    function applyBinding(el) {
+      if (!el || el === root || el.children.length) return;
+      var txt = (el.textContent || '').trim();
+      if (!/[0-9]/.test(txt)) return;
+      var donut = ancestorConic(el);
+      if (donut) { updateDonut(donut, num(txt)); return; }
+      var col = el.parentElement;
+      if (col && [].some.call(col.querySelectorAll('*'), barDim)) updateBarGroup(col);
+    }
+
     root.addEventListener('mouseover', function (e) {
       if (editing || dragging) return;
       if (hovered) hovered.classList.remove('dc-hover');
@@ -489,6 +543,7 @@
     root.addEventListener('dblclick', function (e) { e.preventDefault(); e.stopPropagation(); select(e.target); edit(e.target); });
     document.addEventListener('click', function (e) { if (root.contains(e.target) || mini.contains(e.target)) return; stopEdit(); deselect(); });
     root.addEventListener('keydown', function (e) { if (e.key === 'Enter' && editing) { e.preventDefault(); document.execCommand('insertLineBreak'); } });
+    root.addEventListener('input', function (e) { applyBinding(e.target); });
     document.addEventListener('keydown', function (e) {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); doUndo(); }
       if (e.key === 'Delete' && selected && !editing) { e.preventDefault(); removeSel(); }
