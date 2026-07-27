@@ -67,8 +67,21 @@ EDITOR_CSS = """
   .dc-mini button.mv { background: #c19a4b; color: #3d1122; cursor: move; }
   .dc-mini button.del:hover { background: #b3271f; }
 
+  /* panneau de style (couleurs / gras / taille / alignement) */
+  .dc-style { position: absolute; z-index: 100002; display: none; flex-direction: column; gap: 4px;
+              background: #fff; border: 1px solid #e0d5cc; border-radius: 10px; padding: 6px;
+              box-shadow: 0 6px 18px rgba(0,0,0,.28); font-family: 'Manrope',sans-serif; }
+  .dc-style.on { display: flex; }
+  .dc-style .pr { display: flex; align-items: center; gap: 4px; }
+  .dc-style .pr > span { font-size: 11px; color: #6a4152; width: 42px; flex: none; }
+  .dc-style button { border: 1px solid #e0d5cc; background: #f7eff2; color: #3d1122; border-radius: 5px;
+                     min-width: 26px; height: 24px; cursor: pointer; font-size: 12px; font-weight: 700; padding: 0 6px; }
+  .dc-style button:hover { background: #efdfe6; }
+  .dc-style button.sw { width: 20px; min-width: 20px; height: 20px; padding: 0; border-radius: 50%; }
+  .dc-style input[type=color] { width: 28px; height: 24px; padding: 0; border: 1px solid #e0d5cc; border-radius: 5px; background: #fff; cursor: pointer; }
+
   @media print {
-    .dc-toolbar, .dc-mini { display: none !important; }
+    .dc-toolbar, .dc-mini, .dc-style { display: none !important; }
     .dc-has-editor { padding-top: 0 !important; }
     body { background: #fff !important; }
     .dc-stage { padding: 0 !important; display: block !important; }
@@ -93,9 +106,10 @@ EDITOR_JS = r"""
     var tb = document.createElement('div');
     tb.className = 'dc-toolbar';
     tb.innerHTML = '<span class="ttl">Fiche éditable</span>'
-      + '<span class="hint">Clique un élément : <b>✎ modifier</b> · <b>✥ déplacer</b> (glisser) · '
-      + '<b>⬆ parent</b> · <b>🗑 supprimer</b>. Double-clic = éditer le texte.</span>'
+      + '<span class="hint">Clique un élément : <b>✎</b> texte · <b>⧉</b> dupliquer · <b>✥</b> déplacer · '
+      + '<b>🎨</b> style · <b>🗑</b> supprimer. Double-clic = éditer ; flèches = déplacer au clavier.</span>'
       + '<button class="dc-btn ghost" id="dc-undo" title="Annuler (Ctrl+Z)">↶ Annuler</button>'
+      + '<button class="dc-btn ghost" id="dc-redo" title="Rétablir (Ctrl+Y)">↷ Rétablir</button>'
       + '<button class="dc-btn pdf" id="dc-pdf">🖨️ Exporter en PDF</button>'
       + '<button class="dc-btn ghost" id="dc-reset">↩️ Réinitialiser</button>';
     document.body.appendChild(tb);
@@ -103,38 +117,86 @@ EDITOR_JS = r"""
     var mini = document.createElement('div');
     mini.className = 'dc-mini';
     mini.innerHTML = '<button data-act="edit" title="Modifier le texte">✎</button>'
-      + '<button data-act="move" class="mv" title="Déplacer">✥</button>'
-      + '<button data-act="parent" title="Sélectionner le parent">⬆</button>'
+      + '<button data-act="dup" title="Dupliquer">⧉</button>'
+      + '<button data-act="move" class="mv" title="Déplacer (glisser)">✥</button>'
+      + '<button data-act="parent" title="Sélectionner le bloc parent">⬆</button>'
+      + '<button data-act="style" title="Style : couleur, gras, taille, alignement">🎨</button>'
       + '<button data-act="del" class="del" title="Supprimer">🗑</button>';
     document.body.appendChild(mini);
 
-    var selected = null, hovered = null, editing = null, undo = [];
-    var undoBtn = document.getElementById('dc-undo');
+    // panneau de style (couleurs / gras / taille / alignement)
+    var SW = ['#7a1c3f', '#5a1330', '#c19a4b', '#e09040', '#3d1122', '#6a4152', '#4e9a50', '#3b6fa0', '#ffffff', '#f6efe7'];
+    function swHtml(kind) {
+      return SW.map(function (c) { return '<button class="sw" data-k="' + kind + '" data-c="' + c + '" style="background:' + c + '"></button>'; }).join('');
+    }
+    var panel = document.createElement('div');
+    panel.className = 'dc-style';
+    panel.innerHTML =
+        '<div class="pr"><button data-s="bold" title="Gras"><b>G</b></button>'
+      + '<button data-s="bigger" title="Agrandir le texte">A+</button>'
+      + '<button data-s="smaller" title="Réduire le texte">A−</button>'
+      + '<button data-s="left" title="Aligner à gauche">⯇</button>'
+      + '<button data-s="center" title="Centrer">≡</button>'
+      + '<button data-s="right" title="Aligner à droite">⯈</button></div>'
+      + '<div class="pr"><span>Texte</span>' + swHtml('color') + '<input type="color" data-k="color" title="Couleur personnalisée"></div>'
+      + '<div class="pr"><span>Fond</span>' + swHtml('background') + '<input type="color" data-k="background" title="Fond personnalisé"><button data-s="nobg" title="Sans fond">∅</button></div>';
+    document.body.appendChild(panel);
+
+    var selected = null, hovered = null, editing = null, nudged = false, undo = [], redo = [];
+    var undoBtn = document.getElementById('dc-undo'), redoBtn = document.getElementById('dc-redo');
     document.getElementById('dc-pdf').onclick = function () { window.print(); };
     document.getElementById('dc-reset').onclick = function () { location.reload(); };
-    undoBtn.disabled = true;
-    undoBtn.onclick = doUndo;
+    undoBtn.onclick = doUndo; redoBtn.onclick = doRedo;
+    function updateBtns() { undoBtn.disabled = !undo.length; redoBtn.disabled = !redo.length; }
+    updateBtns();
 
-    function snapshot() { undo.push(root.innerHTML); if (undo.length > 40) undo.shift(); undoBtn.disabled = false; }
-    function doUndo() { if (!undo.length) return; root.innerHTML = undo.pop(); undoBtn.disabled = undo.length === 0; deselect(); }
+    function snapshot() { undo.push(root.innerHTML); if (undo.length > 60) undo.shift(); redo = []; updateBtns(); }
+    function doUndo() { if (!undo.length) return; redo.push(root.innerHTML); root.innerHTML = undo.pop(); deselect(); updateBtns(); }
+    function doRedo() { if (!redo.length) return; undo.push(root.innerHTML); root.innerHTML = redo.pop(); deselect(); updateBtns(); }
     function placeMini() {
       if (!selected) return;
       var r = selected.getBoundingClientRect();
       mini.style.top = (window.scrollY + r.top - 40) + 'px';
       mini.style.left = (window.scrollX + r.left) + 'px';
+      placePanel();
+    }
+    function placePanel() {
+      if (!panel.classList.contains('on') || !selected) return;
+      var r = selected.getBoundingClientRect();
+      panel.style.top = (window.scrollY + r.bottom + 6) + 'px';
+      panel.style.left = (window.scrollX + r.left) + 'px';
     }
     function select(el) {
       if (!el || el === root || !root.contains(el)) return;
-      deselect(true); selected = el; el.classList.add('dc-selected');
+      deselect(true); selected = el; nudged = false; el.classList.add('dc-selected');
       mini.classList.add('on'); placeMini();
     }
     function deselect(keepMini) {
       if (selected) selected.classList.remove('dc-selected');
-      selected = null; if (!keepMini) mini.classList.remove('on');
+      selected = null; panel.classList.remove('on');
+      if (!keepMini) mini.classList.remove('on');
     }
     function stopEdit() { if (editing) { editing.removeAttribute('contenteditable'); editing = null; } }
     function edit(el) { stopEdit(); snapshot(); el.setAttribute('contenteditable', 'true'); el.spellcheck = false; editing = el; el.focus(); }
     function removeSel() { if (!selected) return; snapshot(); var el = selected; deselect(); el.remove(); }
+
+    // --- actions « style utilisateur » ---
+    function duplicate() { if (!selected) return; snapshot(); var c = selected.cloneNode(true); if (selected.parentNode) selected.parentNode.insertBefore(c, selected.nextSibling); select(c); }
+    function fontStep(d) { if (!selected) return; snapshot(); var cur = parseFloat(getComputedStyle(selected).fontSize) || 14; selected.style.fontSize = Math.max(6, cur + d) + 'px'; }
+    function toggleBold() { if (!selected) return; snapshot(); var w = getComputedStyle(selected).fontWeight; selected.style.fontWeight = (w === 'bold' || parseInt(w, 10) >= 600) ? '400' : '700'; }
+    function setAlign(a) { if (!selected) return; snapshot(); selected.style.textAlign = a; }
+    function setStyleProp(prop, val) {
+      if (!selected) return; snapshot();
+      if (prop === 'background') { selected.style.background = val; selected.style.backgroundImage = (val === 'transparent' ? 'none' : ''); }
+      else { selected.style.color = val; }
+    }
+    function nudge(dx, dy) {
+      if (!selected) return;
+      if (!nudged) { snapshot(); nudged = true; }
+      var m = /translate\((-?[0-9.]+)px,\s*(-?[0-9.]+)px\)/.exec(selected.style.transform || '');
+      selected.style.transform = 'translate(' + ((m ? parseFloat(m[1]) : 0) + dx) + 'px,' + ((m ? parseFloat(m[2]) : 0) + dy) + 'px)';
+      placeMini();
+    }
 
     // --- liaison chiffre -> graphique (anneaux conic-gradient + barres CSS %) ---
     function num(s) { var v = parseFloat((s || '').replace(/[^0-9,.\-]/g, '').replace(',', '.')); return isFinite(v) ? v : 0; }
@@ -199,20 +261,44 @@ EDITOR_JS = r"""
     root.addEventListener('mouseout', function () { if (hovered) { hovered.classList.remove('dc-hover'); hovered = null; } });
     root.addEventListener('click', function (e) { if (editing) return; e.preventDefault(); e.stopPropagation(); select(e.target); });
     root.addEventListener('dblclick', function (e) { e.preventDefault(); e.stopPropagation(); select(e.target); edit(e.target); });
-    document.addEventListener('click', function (e) { if (root.contains(e.target) || mini.contains(e.target)) return; stopEdit(); deselect(); });
+    document.addEventListener('click', function (e) {
+      if (root.contains(e.target) || mini.contains(e.target) || panel.contains(e.target)) return;
+      stopEdit(); deselect();
+    });
     root.addEventListener('keydown', function (e) { if (e.key === 'Enter' && editing) { e.preventDefault(); document.execCommand('insertLineBreak'); } });
     root.addEventListener('input', function (e) { applyBinding(e.target); });
     document.addEventListener('keydown', function (e) {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); doUndo(); }
-      if (e.key === 'Delete' && selected && !editing) { e.preventDefault(); removeSel(); }
+      var k = e.key.toLowerCase();
+      if ((e.ctrlKey || e.metaKey) && k === 'z' && !e.shiftKey) { e.preventDefault(); doUndo(); return; }
+      if ((e.ctrlKey || e.metaKey) && (k === 'y' || (k === 'z' && e.shiftKey))) { e.preventDefault(); doRedo(); return; }
+      if (!selected || editing) return;
+      if (e.key === 'Delete') { e.preventDefault(); removeSel(); }
+      else if (e.key.indexOf('Arrow') === 0) {
+        e.preventDefault(); var s = e.shiftKey ? 10 : 1;
+        if (e.key === 'ArrowUp') nudge(0, -s); else if (e.key === 'ArrowDown') nudge(0, s);
+        else if (e.key === 'ArrowLeft') nudge(-s, 0); else if (e.key === 'ArrowRight') nudge(s, 0);
+      }
     });
     mini.addEventListener('click', function (e) {
       var b = e.target.closest('button'); if (!b || !selected) return;
       var act = b.dataset.act;
       if (act === 'edit') edit(selected);
+      else if (act === 'dup') duplicate();
       else if (act === 'parent') { var p = selected.parentElement; if (p && p !== root && root.contains(p)) select(p); }
+      else if (act === 'style') { if (panel.classList.contains('on')) panel.classList.remove('on'); else { panel.classList.add('on'); placePanel(); } }
       else if (act === 'del') removeSel();
     });
+    panel.addEventListener('click', function (e) {
+      var b = e.target.closest('button'); if (!b) return;
+      if (b.classList.contains('sw')) { setStyleProp(b.dataset.k, b.dataset.c); return; }
+      var s = b.dataset.s;
+      if (s === 'bold') toggleBold();
+      else if (s === 'bigger') fontStep(1);
+      else if (s === 'smaller') fontStep(-1);
+      else if (s === 'left' || s === 'center' || s === 'right') setAlign(s);
+      else if (s === 'nobg') setStyleProp('background', 'transparent');
+    });
+    panel.addEventListener('input', function (e) { if (e.target.type === 'color') setStyleProp(e.target.dataset.k, e.target.value); });
 
     var dragging = false, sx = 0, sy = 0, bx = 0, by = 0, target = null;
     mini.querySelector('[data-act="move"]').addEventListener('mousedown', function (e) {
