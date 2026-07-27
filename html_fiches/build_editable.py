@@ -72,10 +72,10 @@ EDITOR_CSS = """
     .dc-has-editor { padding-top: 0 !important; }
     body { background: #fff !important; }
     .dc-stage { padding: 0 !important; display: block !important; }
-    .dc-fiche, doc-page > div { box-shadow: none !important; }
+    .dc-fiche, doc-page > div { box-shadow: none !important; margin: 0 auto !important; overflow: visible !important; }
     .dc-hover, .dc-selected { outline: none !important; }
     [contenteditable="true"]:focus { outline: none !important; background: none !important; }
-    @page { size: A4 portrait; margin: 0; }
+    @page { size: A4 portrait; margin: 8mm; }
   }
 """
 
@@ -230,6 +230,16 @@ EDITOR_JS = r"""
     });
     document.addEventListener('mouseup', function () { if (dragging) { dragging = false; document.body.style.userSelect = ''; placeMini(); } });
     window.addEventListener('scroll', placeMini, true);
+
+    // --- impression : ajuster à une A4 (8 mm de marge) d'après la taille RÉELLE ---
+    // A4 à 96 dpi = 794×1123 px ; zone utile après 8 mm de marge ≈ 734×1063 px.
+    window.addEventListener('beforeprint', function () {
+      root.style.overflow = 'visible';
+      var w = Math.max(root.scrollWidth, root.offsetWidth);
+      var h = Math.max(root.scrollHeight, root.offsetHeight);
+      root.style.zoom = Math.min(734 / w, 1063 / h, 1);
+    });
+    window.addEventListener('afterprint', function () { root.style.zoom = ''; });
   }
   if (document.readyState === 'complete') boot();
   else window.addEventListener('load', boot);
@@ -298,8 +308,6 @@ _PAGE = """<!DOCTYPE html>
   body { margin: 0; background: #e9e3e6; font-family: 'Manrope','Cairo',sans-serif; }
   .dc-stage { display: flex; justify-content: center; padding: 22px 20px 40px; overflow-x: auto; }
   .dc-fiche { box-shadow: 0 12px 40px rgba(90,19,48,.22); flex: 0 0 auto; }
-  /* impression : mise à l'échelle pour tenir sur une page A4 (par fiche) */
-  @media print { .dc-fiche { zoom: __PRINTZOOM__; } }
 __EDITOR_CSS__
 </style>
 </head>
@@ -313,18 +321,23 @@ __EDITOR_CSS__
 """
 
 
-def _print_zoom(fiche_html: str) -> str:
-    """Zoom d'impression = hauteur A4 (1123px à 96 dpi) / hauteur de la fiche,
-    pour que l'affiche tienne sur une seule page A4."""
-    m = re.search(r"height:\s*(\d+)px", fiche_html)
-    h = int(m.group(1)) if m else 1123
-    return f"{min(1.0, 1123.0 / h):.3f}"
+def _relax_root(fiche: str) -> str:
+    """Sur le <div> racine : hauteur fixe → hauteur MINIMALE et overflow
+    visible, pour que la fiche grandisse et affiche tout son contenu au lieu
+    de le couper (certains exports dépassent de quelques pixels le format A4).
+    L'impression remet ensuite le tout à l'échelle A4."""
+    m = re.search(r'style="([^"]*)"', fiche)
+    if not m:
+        return fiche
+    st = re.sub(r"height:\s*(\d+)px", r"min-height:\1px", m.group(1), count=1)
+    st = st.replace("overflow:hidden", "overflow:visible").replace("overflow: hidden", "overflow: visible")
+    return fiche[:m.start(1)] + st + fiche[m.end(1):]
 
 
 def _wrap(fiche: str, out_path, title, lang):
+    fiche = _relax_root(fiche)
     page = (_PAGE.replace("__LANG__", lang).replace("__DIR__", "rtl" if lang == "ar" else "ltr")
             .replace("__TITLE__", title).replace("__FONTS__", FONTS)
-            .replace("__PRINTZOOM__", _print_zoom(fiche))
             .replace("__EDITOR_CSS__", EDITOR_CSS).replace("__EDITOR_JS__", EDITOR_JS)
             .replace("__FICHE__", fiche))
     Path(out_path).write_text(page, encoding="utf-8")

@@ -12,8 +12,6 @@
   body { margin: 0; background: #e9e3e6; font-family: 'Manrope','Cairo',sans-serif; }
   .dc-stage { display: flex; justify-content: center; padding: 22px 20px 40px; overflow-x: auto; }
   .dc-fiche { box-shadow: 0 12px 40px rgba(90,19,48,.22); flex: 0 0 auto; }
-  /* impression : mise à l'échelle pour tenir sur une page A4 (par fiche) */
-  @media print { .dc-fiche { zoom: 0.534; } }
 
   .dc-has-editor { padding-top: 62px !important; }
   .dc-toolbar {
@@ -54,17 +52,17 @@
     .dc-has-editor { padding-top: 0 !important; }
     body { background: #fff !important; }
     .dc-stage { padding: 0 !important; display: block !important; }
-    .dc-fiche, doc-page > div { box-shadow: none !important; }
+    .dc-fiche, doc-page > div { box-shadow: none !important; margin: 0 auto !important; overflow: visible !important; }
     .dc-hover, .dc-selected { outline: none !important; }
     [contenteditable="true"]:focus { outline: none !important; background: none !important; }
-    @page { size: A4 portrait; margin: 0; }
+    @page { size: A4 portrait; margin: 8mm; }
   }
 
 </style>
 </head>
 <body>
   <div class="dc-stage">
-    <div class="dc-fiche" style="width:1488px;height:2104px;margin:0 auto;background:#f6efe7;color:#241418;font-family:'IBM Plex Sans',sans-serif;box-sizing:border-box;overflow:hidden;display:flex;flex-direction:column;">
+    <div class="dc-fiche" style="width:1488px;min-height:2104px;margin:0 auto;background:#f6efe7;color:#241418;font-family:'IBM Plex Sans',sans-serif;box-sizing:border-box;overflow:visible;display:flex;flex-direction:column;">
 
   <!-- ================= MASTHEAD ================= -->
   <div style="background:#7a1c2b;color:#f6efe7;position:relative;overflow:hidden;">
@@ -441,6 +439,16 @@
     });
     document.addEventListener('mouseup', function () { if (dragging) { dragging = false; document.body.style.userSelect = ''; placeMini(); } });
     window.addEventListener('scroll', placeMini, true);
+
+    // --- impression : ajuster à une A4 (8 mm de marge) d'après la taille RÉELLE ---
+    // A4 à 96 dpi = 794×1123 px ; zone utile après 8 mm de marge ≈ 734×1063 px.
+    window.addEventListener('beforeprint', function () {
+      root.style.overflow = 'visible';
+      var w = Math.max(root.scrollWidth, root.offsetWidth);
+      var h = Math.max(root.scrollHeight, root.offsetHeight);
+      root.style.zoom = Math.min(734 / w, 1063 / h, 1);
+    });
+    window.addEventListener('afterprint', function () { root.style.zoom = ''; });
   }
   if (document.readyState === 'complete') boot();
   else window.addEventListener('load', boot);
