@@ -96,6 +96,16 @@ def section_title(draw, lang, x, y, num, title, rtl=False, rule_to=None, size=30
     return y + size
 
 
+def hbar(draw, x, y, w, pct, fill, track=TRACK, h=11):
+    """Barre de progression horizontale (piste claire + portion remplie),
+    bornée à [0, 100] %. Utilisée par les fiches NEET/EMO."""
+    r = h / 2
+    draw.rounded_rectangle([x, y, x + w, y + h], radius=r, fill=track)
+    fw = max(0.0, min(1.0, (pct or 0) / 100.0)) * w
+    if fw > r:
+        draw.rounded_rectangle([x, y, x + fw, y + h], radius=r, fill=fill)
+
+
 def paste_logo(img, x_right, y, max_h=64):
     """Colle le logo HCP sur une plaque blanche, bord droit à x_right."""
     if not F_LOGO.exists():

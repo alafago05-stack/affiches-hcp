@@ -18,15 +18,15 @@ import pandas as pd
 import streamlit as st
 from PIL import Image
 
-from templates import fiche_situation
+from templates import fiche_emo, fiche_neet, fiche_situation
 
 # Registre des fiches. `module` doit exposer DEFAULT_SPEC, EDIT_SCHEMA,
 # render(spec, lang, path), LANG. Les fiches non encore construites sont
 # marquées "soon" (affichées comme « en préparation »).
 REGISTRY = {
     "situation": {"label": "📊 Fiche 1 — Situation du marché du travail", "module": fiche_situation, "status": "ready"},
-    "neet": {"label": "🎓 Fiche 2 — Les jeunes NEET", "module": None, "status": "soon"},
-    "emo": {"label": "📈 Fiche 3 — EMO 2026 (nouvelle enquête, arabe)", "module": None, "status": "soon"},
+    "neet": {"label": "🎓 Fiche 2 — Les jeunes NEET", "module": fiche_neet, "status": "ready"},
+    "emo": {"label": "📈 Fiche 3 — EMO 2026 (nouvelle enquête, arabe)", "module": fiche_emo, "status": "ready"},
     "autre": {"label": "📝 Fiche 4 — Autre (modèle générique)", "module": None, "status": "soon"},
 }
 
