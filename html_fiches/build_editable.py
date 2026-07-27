@@ -72,7 +72,7 @@ EDITOR_CSS = """
     .dc-has-editor { padding-top: 0 !important; }
     body { background: #fff !important; }
     .dc-stage { padding: 0 !important; display: block !important; }
-    .dc-fiche, doc-page > div { box-shadow: none !important; zoom: 0.68; }
+    .dc-fiche, doc-page > div { box-shadow: none !important; }
     .dc-hover, .dc-selected { outline: none !important; }
     [contenteditable="true"]:focus { outline: none !important; background: none !important; }
     @page { size: A4 portrait; margin: 0; }
@@ -243,6 +243,8 @@ _PAGE = """<!DOCTYPE html>
   body { margin: 0; background: #e9e3e6; font-family: 'Manrope','Cairo',sans-serif; }
   .dc-stage { display: flex; justify-content: center; padding: 22px 20px 40px; overflow-x: auto; }
   .dc-fiche { box-shadow: 0 12px 40px rgba(90,19,48,.22); flex: 0 0 auto; }
+  /* impression : mise à l'échelle pour tenir sur une page A4 (par fiche) */
+  @media print { .dc-fiche { zoom: __PRINTZOOM__; } }
 __EDITOR_CSS__
 </style>
 </head>
@@ -256,15 +258,38 @@ __EDITOR_CSS__
 """
 
 
-def build(dc_html_path, logo_path, out_path, title, lang="ar"):
-    dc = Path(dc_html_path).read_text(encoding="utf-8")
-    fiche = _extract_fiche(dc, _logo_data_uri(logo_path))
+def _print_zoom(fiche_html: str) -> str:
+    """Zoom d'impression = hauteur A4 (1123px à 96 dpi) / hauteur de la fiche,
+    pour que l'affiche tienne sur une seule page A4."""
+    m = re.search(r"height:\s*(\d+)px", fiche_html)
+    h = int(m.group(1)) if m else 1123
+    return f"{min(1.0, 1123.0 / h):.3f}"
+
+
+def _wrap(fiche: str, out_path, title, lang):
     page = (_PAGE.replace("__LANG__", lang).replace("__DIR__", "rtl" if lang == "ar" else "ltr")
             .replace("__TITLE__", title).replace("__FONTS__", FONTS)
+            .replace("__PRINTZOOM__", _print_zoom(fiche))
             .replace("__EDITOR_CSS__", EDITOR_CSS).replace("__EDITOR_JS__", EDITOR_JS)
             .replace("__FICHE__", fiche))
     Path(out_path).write_text(page, encoding="utf-8")
     return out_path
+
+
+def build(dc_html_path, logo_path, out_path, title, lang="ar"):
+    dc = Path(dc_html_path).read_text(encoding="utf-8")
+    fiche = _extract_fiche(dc, _logo_data_uri(logo_path))
+    return _wrap(fiche, out_path, title, lang)
+
+
+def build_from_rendered(rendered_html: str, logo_path, out_path, title, lang="fr"):
+    """Construit la page éditable à partir du HTML DÉJÀ RENDU (capturé dans le
+    navigateur) — pour les fiches dont les gabarits ne s'aplatissent pas
+    proprement en Python (ex. « Situation »). Le logo doit y figurer sous la
+    forme du marqueur `LOGO_PLACEHOLDER`."""
+    fiche = rendered_html.replace("LOGO_PLACEHOLDER", _logo_data_uri(logo_path))
+    fiche = fiche.replace("<div", '<div class="dc-fiche"', 1)
+    return _wrap(fiche, out_path, title, lang)
 
 
 def augment_bundled(bundled_path, out_path, title):

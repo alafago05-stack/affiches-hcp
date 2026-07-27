@@ -12,6 +12,8 @@
   body { margin: 0; background: #e9e3e6; font-family: 'Manrope','Cairo',sans-serif; }
   .dc-stage { display: flex; justify-content: center; padding: 22px 20px 40px; overflow-x: auto; }
   .dc-fiche { box-shadow: 0 12px 40px rgba(90,19,48,.22); flex: 0 0 auto; }
+  /* impression : mise à l'échelle pour tenir sur une page A4 (par fiche) */
+  @media print { .dc-fiche { zoom: 0.534; } }
 
   .dc-has-editor { padding-top: 62px !important; }
   .dc-toolbar {
@@ -52,7 +54,7 @@
     .dc-has-editor { padding-top: 0 !important; }
     body { background: #fff !important; }
     .dc-stage { padding: 0 !important; display: block !important; }
-    .dc-fiche, doc-page > div { box-shadow: none !important; zoom: 0.68; }
+    .dc-fiche, doc-page > div { box-shadow: none !important; }
     .dc-hover, .dc-selected { outline: none !important; }
     [contenteditable="true"]:focus { outline: none !important; background: none !important; }
     @page { size: A4 portrait; margin: 0; }
