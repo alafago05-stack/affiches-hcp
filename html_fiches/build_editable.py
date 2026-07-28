@@ -80,8 +80,18 @@ EDITOR_CSS = """
   .dc-style button.sw { width: 20px; min-width: 20px; height: 20px; padding: 0; border-radius: 50%; }
   .dc-style input[type=color] { width: 28px; height: 24px; padding: 0; border: 1px solid #e0d5cc; border-radius: 5px; background: #fff; cursor: pointer; }
 
+  .dc-btn.add { background: #c19a4b; color: #3d1122; }
+  .dc-btn.add:hover { background: #d3ad5c; }
+  .dc-insmenu { position: absolute; z-index: 100003; display: none; flex-direction: column; gap: 2px;
+                background: #fff; border: 1px solid #e0d5cc; border-radius: 10px; padding: 5px;
+                box-shadow: 0 6px 18px rgba(0,0,0,.28); font-family: 'Manrope',sans-serif; }
+  .dc-insmenu.on { display: flex; }
+  .dc-insmenu button { border: none; background: transparent; color: #3d1122; text-align: left;
+                       padding: 7px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; white-space: nowrap; }
+  .dc-insmenu button:hover { background: #f7eff2; }
+
   @media print {
-    .dc-toolbar, .dc-mini, .dc-style { display: none !important; }
+    .dc-toolbar, .dc-mini, .dc-style, .dc-insmenu { display: none !important; }
     .dc-has-editor { padding-top: 0 !important; }
     body { background: #fff !important; }
     .dc-stage { padding: 0 !important; display: block !important; }
@@ -108,6 +118,7 @@ EDITOR_JS = r"""
     tb.innerHTML = '<span class="ttl">Fiche éditable</span>'
       + '<span class="hint">Clique un élément : <b>✎</b> texte · <b>⧉</b> dupliquer · <b>✥</b> déplacer · '
       + '<b>🎨</b> style · <b>🗑</b> supprimer. Double-clic = éditer ; flèches = déplacer au clavier.</span>'
+      + '<button class="dc-btn add" id="dc-insert" title="Ajouter texte, tableau, graphe…">➕ Insérer ▾</button>'
       + '<button class="dc-btn ghost" id="dc-undo" title="Annuler (Ctrl+Z)">↶ Annuler</button>'
       + '<button class="dc-btn ghost" id="dc-redo" title="Rétablir (Ctrl+Y)">↷ Rétablir</button>'
       + '<button class="dc-btn pdf" id="dc-pdf">🖨️ Exporter en PDF</button>'
@@ -141,6 +152,16 @@ EDITOR_JS = r"""
       + '<div class="pr"><span>Texte</span>' + swHtml('color') + '<input type="color" data-k="color" title="Couleur personnalisée"></div>'
       + '<div class="pr"><span>Fond</span>' + swHtml('background') + '<input type="color" data-k="background" title="Fond personnalisé"><button data-s="nobg" title="Sans fond">∅</button></div>';
     document.body.appendChild(panel);
+
+    // menu « Insérer » (nouveaux éléments)
+    var insMenu = document.createElement('div');
+    insMenu.className = 'dc-insmenu';
+    insMenu.innerHTML = '<button data-ins="text">📝 Bloc de texte</button>'
+      + '<button data-ins="title">🔠 Titre</button>'
+      + '<button data-ins="table">▦ Tableau</button>'
+      + '<button data-ins="bars">📊 Graphe (barres)</button>'
+      + '<button data-ins="donut">◔ Anneau (%)</button>';
+    document.body.appendChild(insMenu);
 
     var selected = null, hovered = null, editing = null, nudged = false, undo = [], redo = [];
     var undoBtn = document.getElementById('dc-undo'), redoBtn = document.getElementById('dc-redo');
@@ -196,6 +217,44 @@ EDITOR_JS = r"""
       var m = /translate\((-?[0-9.]+)px,\s*(-?[0-9.]+)px\)/.exec(selected.style.transform || '');
       selected.style.transform = 'translate(' + ((m ? parseFloat(m[1]) : 0) + dx) + 'px,' + ((m ? parseFloat(m[2]) : 0) + dy) + 'px)';
       placeMini();
+    }
+
+    // --- insertion de nouveaux éléments (texte, titre, tableau, graphes) ---
+    var TD = 'style="padding:6px 14px;border:1px solid #e0d5cc;"';
+    function barsHtml() {
+      var cols = [['A', 60], ['B', 80], ['C', 45], ['D', 30]];
+      return '<div style="display:flex;align-items:flex-end;gap:16px;height:130px;padding:12px;margin:8px;border:1px solid #e0d5cc;border-radius:10px;background:#fff;">'
+        + cols.map(function (c) {
+          return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;gap:6px;">'
+            + '<div style="font-weight:800;font-size:15px;color:#7a1c3f;">' + c[1] + '%</div>'
+            + '<div style="width:100%;max-width:52px;height:' + c[1] + '%;background:linear-gradient(180deg,#a63b5c,#7a1c3f);border-radius:6px 6px 0 0;"></div>'
+            + '<div style="font-size:12px;font-weight:700;color:#5a1330;">' + c[0] + '</div></div>';
+        }).join('') + '</div>';
+    }
+    var SNIPPETS = {
+      text: '<div style="padding:8px 10px;font-size:14px;line-height:1.45;color:#3d1122;">Nouveau texte — cliquez pour le modifier.</div>',
+      title: '<div style="padding:6px 10px;font-weight:800;font-size:20px;color:#7a1c3f;">Nouveau titre</div>',
+      table: '<table style="border-collapse:collapse;font-size:13px;margin:8px;background:#fff;text-align:center;">'
+        + '<tr style="background:#5a1330;color:#fff;font-weight:700;"><td ' + TD + '>Colonne 1</td><td ' + TD + '>Colonne 2</td><td ' + TD + '>Colonne 3</td></tr>'
+        + '<tr><td ' + TD + '>—</td><td ' + TD + '>—</td><td ' + TD + '>—</td></tr>'
+        + '<tr><td ' + TD + '>—</td><td ' + TD + '>—</td><td ' + TD + '>—</td></tr></table>',
+      bars: barsHtml(),
+      donut: '<div style="display:inline-flex;align-items:center;gap:12px;padding:10px;margin:8px;">'
+        + '<div style="width:74px;height:74px;border-radius:50%;background:conic-gradient(#7a1c3f 0% 60%,#f0dde4 60% 100%);display:flex;align-items:center;justify-content:center;">'
+        + '<div style="width:52px;height:52px;border-radius:50%;background:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:15px;color:#7a1c3f;">60%</div></div>'
+        + '<div style="font-weight:700;font-size:14px;color:#3d1122;">Libellé — modifier</div></div>'
+    };
+    function insertEl(kind) {
+      var tpl = SNIPPETS[kind]; if (!tpl) return;
+      snapshot();
+      var w = document.createElement('div'); w.innerHTML = tpl.trim();
+      var el = w.firstChild;
+      var ref = (selected && root.contains(selected)) ? selected : null;
+      if (ref && ref.parentNode && root.contains(ref.parentNode)) ref.parentNode.insertBefore(el, ref.nextSibling);
+      else root.appendChild(el);
+      insMenu.classList.remove('on');
+      fitAll(); select(el);
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
     }
 
     // --- liaison chiffre -> graphique (anneaux conic-gradient + barres CSS %) ---
@@ -262,7 +321,8 @@ EDITOR_JS = r"""
     root.addEventListener('click', function (e) { if (editing) return; e.preventDefault(); e.stopPropagation(); select(e.target); });
     root.addEventListener('dblclick', function (e) { e.preventDefault(); e.stopPropagation(); select(e.target); edit(e.target); });
     document.addEventListener('click', function (e) {
-      if (root.contains(e.target) || mini.contains(e.target) || panel.contains(e.target)) return;
+      if (!insMenu.contains(e.target) && e.target.id !== 'dc-insert') insMenu.classList.remove('on');
+      if (root.contains(e.target) || mini.contains(e.target) || panel.contains(e.target) || insMenu.contains(e.target)) return;
       stopEdit(); deselect();
     });
     root.addEventListener('keydown', function (e) { if (e.key === 'Enter' && editing) { e.preventDefault(); document.execCommand('insertLineBreak'); } });
@@ -299,6 +359,15 @@ EDITOR_JS = r"""
       else if (s === 'nobg') setStyleProp('background', 'transparent');
     });
     panel.addEventListener('input', function (e) { if (e.target.type === 'color') setStyleProp(e.target.dataset.k, e.target.value); });
+    document.getElementById('dc-insert').onclick = function (e) {
+      e.stopPropagation();
+      if (insMenu.classList.contains('on')) { insMenu.classList.remove('on'); return; }
+      var r = this.getBoundingClientRect();
+      insMenu.style.top = (window.scrollY + r.bottom + 4) + 'px';
+      insMenu.style.left = (window.scrollX + Math.max(6, Math.min(r.left, window.innerWidth - 190))) + 'px';
+      insMenu.classList.add('on');
+    };
+    insMenu.addEventListener('click', function (e) { var b = e.target.closest('button'); if (b) insertEl(b.dataset.ins); });
 
     var dragging = false, sx = 0, sy = 0, bx = 0, by = 0, target = null;
     mini.querySelector('[data-act="move"]').addEventListener('mousedown', function (e) {
