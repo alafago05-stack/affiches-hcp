@@ -28,6 +28,8 @@
             padding: 9px 15px; cursor: pointer; font-family: inherit; white-space: nowrap; }
   .dc-btn.pdf { background: #c19a4b; color: #3d1122; }
   .dc-btn.pdf:hover { background: #d3ad5c; }
+  .dc-btn.save { background: #4e9a50; color: #fff; }
+  .dc-btn.save:hover { background: #5aab5c; }
   .dc-btn.ghost { background: rgba(255,255,255,.14); color: #fff; }
   .dc-btn.ghost:hover { background: rgba(255,255,255,.26); }
   .dc-btn:disabled { opacity: .4; cursor: default; }
@@ -461,6 +463,7 @@
       + '<button class="dc-btn add" id="dc-insert" title="Ajouter texte, tableau, graphe…">➕ Insérer ▾</button>'
       + '<button class="dc-btn ghost" id="dc-undo" title="Annuler (Ctrl+Z)">↶ Annuler</button>'
       + '<button class="dc-btn ghost" id="dc-redo" title="Rétablir (Ctrl+Y)">↷ Rétablir</button>'
+      + '<button class="dc-btn save" id="dc-save" title="Enregistrer votre version (télécharge le HTML modifié, réouvrable et éditable)">💾 Enregistrer</button>'
       + '<button class="dc-btn pdf" id="dc-pdf">🖨️ Exporter en PDF</button>'
       + '<button class="dc-btn ghost" id="dc-reset">↩️ Réinitialiser</button>';
     document.body.appendChild(tb);
@@ -507,7 +510,34 @@
     var undoBtn = document.getElementById('dc-undo'), redoBtn = document.getElementById('dc-redo');
     document.getElementById('dc-pdf').onclick = function () { window.print(); };
     document.getElementById('dc-reset').onclick = function () { location.reload(); };
+    document.getElementById('dc-save').onclick = save;
     undoBtn.onclick = doUndo; redoBtn.onclick = doRedo;
+
+    // Télécharge la fiche AVEC les modifications : on clone le document, on
+    // retire les éléments d'interface de l'éditeur (recréés au chargement) et
+    // les états transitoires (sélection, contenteditable). Le fichier obtenu
+    // est un HTML autonome identique aux fiches d'origine — donc réouvrable et
+    // à nouveau éditable, avec le contenu modifié conservé.
+    function save() {
+      stopEdit(); deselect(); insMenu.classList.remove('on');
+      var docEl = document.documentElement.cloneNode(true);
+      ['.dc-toolbar', '.dc-mini', '.dc-style', '.dc-insmenu'].forEach(function (s) {
+        var e = docEl.querySelector(s); if (e) e.remove();
+      });
+      var b = docEl.querySelector('body'); if (b) b.classList.remove('dc-has-editor');
+      var f = docEl.querySelector('.dc-fiche');
+      if (f) {
+        f.style.zoom = '';
+        [].forEach.call(f.querySelectorAll('.dc-selected, .dc-hover, [contenteditable]'), function (e) {
+          e.classList.remove('dc-selected'); e.classList.remove('dc-hover'); e.removeAttribute('contenteditable');
+        });
+      }
+      var html = '<!DOCTYPE html>\n' + docEl.outerHTML;
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+      a.download = (document.title || 'fiche').replace(/[^\w\-]+/g, '_') + '.html';
+      document.body.appendChild(a); a.click(); a.remove();
+    }
     function updateBtns() { undoBtn.disabled = !undo.length; redoBtn.disabled = !redo.length; }
     updateBtns();
 

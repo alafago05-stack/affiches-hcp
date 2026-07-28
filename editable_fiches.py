@@ -53,18 +53,17 @@ def render() -> None:
     col1, col2 = st.columns([1, 2])
     with col1:
         st.download_button(
-            "⬇️ Télécharger la fiche éditable",
+            "⬇️ Télécharger le modèle (vierge)",
             data=html,
             file_name=f["file"],
             mime="text/html",
-            help="Ouvrez le fichier téléchargé dans votre navigateur : c'est là que "
-            "l'édition et l'export PDF sont les plus fiables (vos modifications sont conservées).",
+            help="Le modèle de départ, à ouvrir dans votre navigateur pour travailler hors ligne.",
         )
     with col2:
         st.info(
-            "💡 Pour **conserver** vos modifications et obtenir un **PDF fidèle**, téléchargez le "
-            "fichier et ouvrez-le dans votre navigateur (double-clic). L'aperçu ci-dessous sert "
-            "à essayer l'édition ; il repart du modèle à chaque rechargement de la page."
+            "💡 Modifiez la fiche ci-dessous, puis cliquez sur **💾 Enregistrer** dans sa barre "
+            "d'outils : cela télécharge un fichier HTML **avec vos changements**, réouvrable et "
+            "à nouveau éditable. **🖨️ Exporter en PDF** produit le PDF final (A4)."
         )
 
     st.divider()
