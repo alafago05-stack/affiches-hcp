@@ -679,7 +679,13 @@
     function svgNum(t) { return parseFloat((t.textContent || '').replace(',', '.')); }
     function fmtNum(v) { return (Math.round(v * 10) / 10).toFixed(1).replace('.', ','); }
     function attr(e, n) { return parseFloat(e.getAttribute(n)); }
-    function colorOf(e) { return (e.getAttribute('fill') || e.getAttribute('stroke') || e.style.fill || e.style.stroke || '').toLowerCase(); }
+    function colorOf(e) {
+      // Une polyligne a fill="none" + stroke="couleur" ; un cercle a fill="couleur".
+      // On saute "none" pour apparier un point (fill) à sa courbe (stroke).
+      var cand = [e.getAttribute('fill'), e.getAttribute('stroke'), e.style.fill, e.style.stroke];
+      for (var i = 0; i < cand.length; i++) { var c = cand[i]; if (c && c !== 'none') return c.toLowerCase(); }
+      return '';
+    }
     function fitLin(pts) {
       var n = pts.length, sx = 0, sy = 0, sxx = 0, sxy = 0;
       pts.forEach(function (p) { sx += p[0]; sy += p[1]; sxx += p[0] * p[0]; sxy += p[0] * p[1]; });
