@@ -42,15 +42,22 @@ _SKIP_ANCESTORS = {"script", "style", "svg"}
 #  Clé / configuration                                                         #
 # --------------------------------------------------------------------------- #
 def _key() -> str | None:
-    """Clé API depuis les secrets, ou None. Ne lève jamais."""
+    """Clé API — depuis les secrets Streamlit (recommandé) ou, à défaut, la
+    variable d'environnement GEMINI_API_KEY / GOOGLE_API_KEY. Toujours lue
+    côté serveur, jamais exposée au navigateur. Ne lève jamais."""
     try:
         g = st.secrets.get("gemini")
         if g:
-            k = g.get("api_key")
-            if k and str(k).strip() and not str(k).startswith("AIza..."):
-                return str(k).strip()
+            k = str(g.get("api_key") or "").strip()
+            if k and k != "AIza...":  # ignore le placeholder non modifié
+                return k
     except Exception:
         pass
+    import os
+    for var in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
+        k = (os.environ.get(var) or "").strip()
+        if k:
+            return k
     return None
 
 

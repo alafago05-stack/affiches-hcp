@@ -102,8 +102,10 @@ def _render_ai(key: str, cur_html: str, modified: bool) -> None:
                     "`.streamlit/secrets.toml` et collez la clé sous `[gemini]`.\n"
                     "3. **En ligne** (Streamlit Cloud) : votre app > **Settings > Secrets**, "
                     "collez-y le bloc `[gemini]`.\n\n"
+                    "✅ **Une seule fois** : après ça, le chat fonctionne **pour tous les "
+                    "visiteurs** — personne d'autre n'a de clé à saisir.\n\n"
                     "🔐 La clé reste **côté serveur** : elle n'est jamais envoyée au navigateur "
-                    "ni écrite dans la fiche."
+                    "ni écrite dans la fiche (indispensable ici, le dépôt étant public)."
                 )
             return
 
