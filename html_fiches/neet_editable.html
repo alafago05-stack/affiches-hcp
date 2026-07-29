@@ -63,6 +63,16 @@
   .dc-style button.sw { width: 20px; min-width: 20px; height: 20px; padding: 0; border-radius: 50%; }
   .dc-style input[type=color] { width: 28px; height: 24px; padding: 0; border: 1px solid #e0d5cc; border-radius: 5px; background: #fff; cursor: pointer; }
 
+  .dc-chartdata { position: absolute; z-index: 100002; display: none; background: #fff; border: 1px solid #e0d5cc;
+                  border-radius: 10px; padding: 8px 10px; box-shadow: 0 6px 18px rgba(0,0,0,.28);
+                  font-family: 'Manrope',sans-serif; max-width: 520px; }
+  .dc-chartdata.on { display: block; }
+  .dc-chartdata .ch-hd { font-size: 12px; font-weight: 700; color: #5a1330; margin-bottom: 6px; }
+  .dc-chartdata .ch-body { display: flex; flex-wrap: wrap; gap: 6px; }
+  .dc-chartdata .ch-it { display: flex; align-items: center; gap: 4px; }
+  .dc-chartdata .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none; }
+  .dc-chartdata input { width: 58px; padding: 3px 6px; border: 1px solid #e0d5cc; border-radius: 5px; font-size: 12px; }
+
   .dc-btn.add { background: #c19a4b; color: #3d1122; }
   .dc-btn.add:hover { background: #d3ad5c; }
   .dc-insmenu { position: absolute; z-index: 100003; display: none; flex-direction: column; gap: 2px;
@@ -74,7 +84,7 @@
   .dc-insmenu button:hover { background: #f7eff2; }
 
   @media print {
-    .dc-toolbar, .dc-mini, .dc-style, .dc-insmenu { display: none !important; }
+    .dc-toolbar, .dc-mini, .dc-style, .dc-insmenu, .dc-chartdata { display: none !important; }
     .dc-has-editor { padding-top: 0 !important; }
     body { background: #fff !important; }
     .dc-stage { padding: 0 !important; display: block !important; }
@@ -314,6 +324,7 @@
 
 </div>
   </div>
+  <script src="https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.js"></script><script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
   <script>
 (function () {
   function boot() {
@@ -335,7 +346,7 @@
       + '<button class="dc-btn ghost" id="dc-undo" title="Annuler (Ctrl+Z)">↶ Annuler</button>'
       + '<button class="dc-btn ghost" id="dc-redo" title="Rétablir (Ctrl+Y)">↷ Rétablir</button>'
       + '<button class="dc-btn save" id="dc-save" title="Enregistrer votre version (télécharge le HTML modifié, réouvrable et éditable)">💾 Enregistrer</button>'
-      + '<button class="dc-btn pdf" id="dc-pdf">🖨️ Exporter en PDF</button>'
+      + '<button class="dc-btn pdf" id="dc-pdf" title="Télécharge directement le PDF (A4)">⬇️ Exporter en PDF</button>'
       + '<button class="dc-btn ghost" id="dc-reset">↩️ Réinitialiser</button>';
     document.body.appendChild(tb);
 
@@ -377,10 +388,44 @@
       + '<button data-ins="donut">◔ Anneau (%)</button>';
     document.body.appendChild(insMenu);
 
+    // panneau « Données du graphe » (pour les graphes SVG dont le texte n'est
+    // pas éditable au clavier : on modifie les valeurs ici, ça redessine)
+    var chartPanel = document.createElement('div');
+    chartPanel.className = 'dc-chartdata';
+    document.body.appendChild(chartPanel);
+
     var selected = null, hovered = null, editing = null, nudged = false, undo = [], redo = [];
+    var chartModel = null, chartEditing = false, chartSvg = null;
     var undoBtn = document.getElementById('dc-undo'), redoBtn = document.getElementById('dc-redo');
-    document.getElementById('dc-pdf').onclick = function () { window.print(); };
+    document.getElementById('dc-pdf').onclick = downloadPdf;
     document.getElementById('dc-reset').onclick = function () { location.reload(); };
+
+    // Exporte la fiche en PDF A4 et le TÉLÉCHARGE directement (sans boîte
+    // d'impression). On capture la fiche en image via html-to-image (rendu
+    // fidèle : arabe/RTL, dégradés coniques, polices intégrées), puis on la
+    // place dans un PDF A4 (une page, 8 mm de marge) via jsPDF. Repli sur
+    // l'impression navigateur si les librairies ne sont pas chargées.
+    function downloadPdf() {
+      if (!window.htmlToImage || !window.jspdf) { window.print(); return; }
+      stopEdit(); deselect();
+      var btn = document.getElementById('dc-pdf'), lbl = btn.innerHTML;
+      btn.disabled = true; btn.innerHTML = '⏳ PDF…';
+      var prev = root.style.zoom; root.style.zoom = '';
+      function done() { root.style.zoom = prev; btn.disabled = false; btn.innerHTML = lbl; fitAll(); }
+      window.htmlToImage.toJpeg(root, { pixelRatio: 2, quality: 0.95, backgroundColor: '#ffffff' }).then(function (dataUrl) {
+        var img = new Image();
+        img.onload = function () {
+          var pdf = new window.jspdf.jsPDF({ orientation: 'p', unit: 'mm', format: 'a4', compress: true });
+          var pw = 210, ph = 297, m = 8, aw = pw - 2 * m, ah = ph - 2 * m;
+          var s = Math.min(aw / img.width, ah / img.height);
+          var w = img.width * s, h = img.height * s;
+          pdf.addImage(dataUrl, 'JPEG', (pw - w) / 2, (ph - h) / 2, w, h);
+          pdf.save((document.title || 'fiche').replace(/[^\w\-]+/g, '_') + '.pdf');
+          done();
+        };
+        img.src = dataUrl;
+      }).catch(function (e) { done(); alert('Impossible de générer le PDF : ' + e); });
+    }
     document.getElementById('dc-save').onclick = save;
     undoBtn.onclick = doUndo; redoBtn.onclick = doRedo;
 
@@ -432,10 +477,12 @@
       if (!el || el === root || !root.contains(el)) return;
       deselect(true); selected = el; nudged = false; el.classList.add('dc-selected');
       mini.classList.add('on'); placeMini();
+      var ch = chartOf(el);
+      if (ch) { showChartPanel(ch); } else { chartPanel.classList.remove('on'); chartSvg = null; }
     }
     function deselect(keepMini) {
       if (selected) selected.classList.remove('dc-selected');
-      selected = null; panel.classList.remove('on');
+      selected = null; panel.classList.remove('on'); chartPanel.classList.remove('on'); chartSvg = null;
       if (!keepMini) mini.classList.remove('on');
     }
     function stopEdit() { if (editing) { editing.removeAttribute('contenteditable'); editing = null; } }
@@ -496,6 +543,96 @@
       insMenu.classList.remove('on');
       fitAll(); select(el);
       el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+
+    // --- graphes SVG (courbe / barres) : panneau de données -> redessin ---
+    function isValTxt(t) { return /^-?\d+[.,]\d+$/.test((t.textContent || '').trim()); }
+    function svgNum(t) { return parseFloat((t.textContent || '').replace(',', '.')); }
+    function fmtNum(v) { return (Math.round(v * 10) / 10).toFixed(1).replace('.', ','); }
+    function attr(e, n) { return parseFloat(e.getAttribute(n)); }
+    function colorOf(e) { return (e.getAttribute('fill') || e.getAttribute('stroke') || e.style.fill || e.style.stroke || '').toLowerCase(); }
+    function fitLin(pts) {
+      var n = pts.length, sx = 0, sy = 0, sxx = 0, sxy = 0;
+      pts.forEach(function (p) { sx += p[0]; sy += p[1]; sxx += p[0] * p[0]; sxy += p[0] * p[1]; });
+      var den = n * sxx - sx * sx || 1;
+      var b = (n * sxy - sx * sy) / den;
+      return { a: (sy - b * sx) / n, b: b };
+    }
+    function chartOf(el) {
+      var a = el;
+      while (a && a !== root) { if (a.tagName && a.tagName.toLowerCase() === 'svg') break; a = a.parentNode; }
+      if (a && a.tagName && a.tagName.toLowerCase() === 'svg'
+          && (a.querySelectorAll('polyline').length || a.querySelectorAll('rect').length >= 3)
+          && [].some.call(a.querySelectorAll('text'), isValTxt)) return a;
+      return null;
+    }
+    function parseChart(svg) {
+      var labels = [].filter.call(svg.querySelectorAll('text'), isValTxt);
+      var items = [];
+      if (svg.querySelectorAll('polyline').length) {           // ----- COURBE -----
+        var circles = [].slice.call(svg.querySelectorAll('circle'));
+        var polys = [].slice.call(svg.querySelectorAll('polyline'));
+        var matched = labels.map(function (lb) {
+          var lx = attr(lb, 'x'), ly = attr(lb, 'y');
+          var cand = circles.filter(function (c) { return Math.abs(attr(c, 'cx') - lx) < 5; });
+          if (!cand.length) return null;
+          cand.sort(function (a, b) { return Math.abs(attr(a, 'cy') - ly) - Math.abs(attr(b, 'cy') - ly); });
+          return { lb: lb, circle: cand[0] };
+        }).filter(Boolean);
+        var sc = fitLin(matched.map(function (m) { return [svgNum(m.lb), attr(m.circle, 'cy')]; }));
+        matched.forEach(function (m) {
+          var color = colorOf(m.circle);
+          var poly = polys.filter(function (p) { return colorOf(p) === color; })[0];
+          var group = circles.filter(function (c) { return colorOf(c) === color; }).sort(function (a, b) { return attr(a, 'cx') - attr(b, 'cx'); });
+          var idx = group.indexOf(m.circle), cx = attr(m.circle, 'cx');
+          items.push({
+            label: m.lb, value: svgNum(m.lb), color: color, apply: function (v) {
+              var cy = sc.a + sc.b * v, oldY = attr(m.circle, 'cy');
+              m.circle.setAttribute('cy', cy.toFixed(2));
+              if (poly && idx >= 0) { var pts = poly.getAttribute('points').trim().split(/\s+/); if (idx < pts.length) { pts[idx] = cx.toFixed(1) + ',' + cy.toFixed(1); poly.setAttribute('points', pts.join(' ')); } }
+              m.lb.setAttribute('y', (attr(m.lb, 'y') + (cy - oldY)).toFixed(1));
+              m.lb.textContent = fmtNum(v);
+            }
+          });
+        });
+      } else {                                                 // ----- BARRES -----
+        var rects = [].slice.call(svg.querySelectorAll('rect'));
+        var baseline = Math.max.apply(null, rects.map(function (r) { return attr(r, 'y') + attr(r, 'height'); }));
+        labels.forEach(function (lb) {
+          var lx = attr(lb, 'x');
+          var rect = rects.slice().sort(function (a, b) {
+            return Math.abs(attr(a, 'x') + attr(a, 'width') / 2 - lx) - Math.abs(attr(b, 'x') + attr(b, 'width') / 2 - lx);
+          })[0];
+          if (!rect) return;
+          var v0 = svgNum(lb), k = v0 > 0 ? attr(rect, 'height') / v0 : 2.8;
+          items.push({
+            label: lb, value: v0, color: colorOf(rect), apply: function (v) {
+              var h = Math.max(0, v * k);
+              rect.setAttribute('height', h.toFixed(2)); rect.setAttribute('y', (baseline - h).toFixed(2));
+              lb.setAttribute('y', (baseline - h - 2).toFixed(1)); lb.textContent = fmtNum(v);
+            }
+          });
+        });
+      }
+      return { items: items };
+    }
+    function placeChartPanel() {
+      if (!chartPanel.classList.contains('on') || !chartSvg) return;
+      var r = chartSvg.getBoundingClientRect();
+      chartPanel.style.top = (window.scrollY + r.bottom + 6) + 'px';
+      chartPanel.style.left = (window.scrollX + Math.max(6, Math.min(r.left, window.innerWidth - 540))) + 'px';
+    }
+    function showChartPanel(svg) {
+      chartSvg = svg; chartEditing = false;
+      chartModel = parseChart(svg);
+      if (!chartModel.items.length) { chartPanel.classList.remove('on'); return; }
+      var h = '<div class="ch-hd">📊 Données du graphe — modifiez les valeurs</div><div class="ch-body">';
+      chartModel.items.forEach(function (it, i) {
+        h += '<label class="ch-it"><span class="dot" style="background:' + (it.color || '#7a1c3f') + '"></span>'
+          + '<input type="number" step="0.1" data-i="' + i + '" value="' + (Math.round(it.value * 10) / 10) + '"></label>';
+      });
+      chartPanel.innerHTML = h + '</div>';
+      chartPanel.classList.add('on'); placeChartPanel();
     }
 
     // --- liaison chiffre -> graphique (anneaux conic-gradient + barres CSS %) ---
@@ -563,7 +700,8 @@
     root.addEventListener('dblclick', function (e) { e.preventDefault(); e.stopPropagation(); select(e.target); edit(e.target); });
     document.addEventListener('click', function (e) {
       if (!insMenu.contains(e.target) && e.target.id !== 'dc-insert') insMenu.classList.remove('on');
-      if (root.contains(e.target) || mini.contains(e.target) || panel.contains(e.target) || insMenu.contains(e.target)) return;
+      if (root.contains(e.target) || mini.contains(e.target) || panel.contains(e.target)
+          || insMenu.contains(e.target) || chartPanel.contains(e.target)) return;
       stopEdit(); deselect();
     });
     root.addEventListener('keydown', function (e) { if (e.key === 'Enter' && editing) { e.preventDefault(); document.execCommand('insertLineBreak'); } });
@@ -600,6 +738,12 @@
       else if (s === 'nobg') setStyleProp('background', 'transparent');
     });
     panel.addEventListener('input', function (e) { if (e.target.type === 'color') setStyleProp(e.target.dataset.k, e.target.value); });
+    chartPanel.addEventListener('input', function (e) {
+      var inp = e.target; if (inp.tagName !== 'INPUT' || !chartModel) return;
+      if (!chartEditing) { snapshot(); chartEditing = true; }
+      var v = parseFloat(String(inp.value).replace(',', '.'));
+      if (isFinite(v)) chartModel.items[+inp.dataset.i].apply(v);
+    });
     document.getElementById('dc-insert').onclick = function (e) {
       e.stopPropagation();
       if (insMenu.classList.contains('on')) { insMenu.classList.remove('on'); return; }
@@ -625,7 +769,7 @@
       placeMini();
     });
     document.addEventListener('mouseup', function () { if (dragging) { dragging = false; document.body.style.userSelect = ''; placeMini(); } });
-    window.addEventListener('scroll', placeMini, true);
+    window.addEventListener('scroll', function () { placeMini(); placeChartPanel(); }, true);
 
     // --- impression : ajuster à une A4 (8 mm de marge) d'après la taille RÉELLE ---
     // A4 à 96 dpi = 794×1123 px ; zone utile après 8 mm de marge ≈ 734×1063 px.
