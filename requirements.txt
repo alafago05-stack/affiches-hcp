@@ -11,3 +11,9 @@ fonttools>=4.22
 # local : support.py n'importe psycopg que si une URL Postgres est configurée,
 # et retombe sinon sur SQLite.
 psycopg[binary]>=3.1
+# Assistant IA (Google Gemini) — facultatif. ai_assistant.py ne l'importe que
+# si une clé est configurée dans les secrets ; sans clé, le chat IA est masqué.
+google-genai>=1.0
+# Lecture/écriture du texte des fiches HTML pour l'assistant IA (application
+# des modifications comme texte échappé — pas d'injection possible).
+beautifulsoup4>=4.12
