@@ -194,11 +194,35 @@ def converse(history: list[dict], user_msg: str, segments: list[str],
         )
         raw = (resp.text or "").strip()
     except Exception as exc:
-        raise RuntimeError(f"Erreur de l'API Gemini : {exc}") from exc
+        raise RuntimeError(_friendly_api_error(exc)) from exc
 
     # Parse JSON tolérant (au cas où le modèle enrobe le JSON).
     reply, edits = _parse_json_reply(raw)
     return reply, edits
+
+
+def _friendly_api_error(exc: Exception) -> str:
+    """Transforme une erreur d'API brute en message actionnable pour l'utilisateur."""
+    code = getattr(exc, "code", None)
+    s = str(exc)
+    low = s.lower()
+    if code == 429 or "RESOURCE_EXHAUSTED" in s or "quota" in low:
+        return (
+            "🚦 Quota Gemini épuisé pour ce modèle. Souvent, le projet Google n'a "
+            "**aucun palier gratuit** pour ce modèle/région. Deux options :\n\n"
+            "• Essayez un autre modèle : ajoutez `model = \"gemini-1.5-flash\"` sous "
+            "`[gemini]` dans les secrets.\n"
+            "• Ou activez la **facturation** sur votre projet Google (Gemini Flash "
+            "coûte quelques centimes par million de tokens)."
+        )
+    if "API_KEY_INVALID" in s or ("api key" in low and "not valid" in low) or code == 401:
+        return "🔑 Clé API invalide — vérifiez `api_key` sous `[gemini]` dans les secrets."
+    if code == 404 or "NOT_FOUND" in s:
+        return (
+            "🔎 Modèle introuvable — changez `model` sous `[gemini]` dans les secrets "
+            "(ex. `gemini-1.5-flash` ou `gemini-flash-latest`)."
+        )
+    return f"⚠️ Erreur de l'API Gemini : {exc}"
 
 
 def _parse_json_reply(raw: str) -> tuple[str, list[dict]]:

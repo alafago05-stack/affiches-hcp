@@ -168,7 +168,7 @@ def _render_ai(key: str, cur_html: str, modified: bool) -> None:
                     segs = ai_assistant.extract_segments(cur_html)
                     reply, edits = ai_assistant.converse(msgs, q.strip(), segs)
                 except Exception as exc:  # clé invalide, paquet manquant, erreur API…
-                    reply, edits = f"⚠️ {exc}", []
+                    reply, edits = str(exc), []  # message déjà formaté par ai_assistant
             msgs.append({"role": "assistant", "content": reply, "edits": edits, "applied": False})
             st.session_state[msgs_key] = msgs
             st.rerun()
