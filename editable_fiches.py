@@ -156,6 +156,13 @@ def _render_ai(key: str, cur_html: str, modified: bool) -> None:
                 label_visibility="collapsed",
                 height=70,
             )
+            up = st.file_uploader(
+                "📎 Joindre une image, un PDF ou un Excel/CSV (facultatif) — "
+                "l'IA lit son contenu pour créer un tableau/graphique",
+                type=ai_assistant.UPLOAD_TYPES,
+                accept_multiple_files=True,
+                key=f"upl_{key}",
+            )
             sent = st.form_submit_button("Envoyer", type="primary")
 
         cols = st.columns([1, 1, 2])
@@ -194,12 +201,21 @@ def _render_ai(key: str, cur_html: str, modified: bool) -> None:
             if res:
                 st.code(res, language="text")
 
-        if sent and q.strip():
-            msgs.append({"role": "user", "content": q.strip()})
+        if sent and (q.strip() or up):
+            media, doc_text, labels, warns = [], "", [], []
+            if up:
+                media, doc_text, labels, warns = ai_assistant.process_uploads(
+                    [(f.name, f.type, f.getvalue()) for f in up])
+            for w in warns:
+                st.warning(w)
+            shown = q.strip() + (("\n\n📎 " + ", ".join(labels)) if labels else "")
+            msgs.append({"role": "user", "content": shown or "📎 (fichiers joints)"})
+            ask = q.strip() or "Utilise le(s) fichier(s) joint(s) pour proposer des ajouts à la fiche."
             with st.spinner("L'assistant réfléchit…"):
                 try:
                     segs = ai_assistant.extract_segments(cur_html)
-                    reply, ops = ai_assistant.converse(msgs, q.strip(), segs)
+                    reply, ops = ai_assistant.converse(
+                        msgs, ask, segs, media=media, doc_text=doc_text)
                 except Exception as exc:  # clé invalide, paquet manquant, erreur API…
                     reply, ops = str(exc), []  # message déjà formaté par ai_assistant
             msgs.append({"role": "assistant", "content": reply, "ops": ops, "applied": False})

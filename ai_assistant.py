@@ -358,6 +358,11 @@ _SYSTEM = (
     "Concis et factuel.\n\n"
     "On te fournit les SEGMENTS de texte de la fiche, numérotés [i]. Réfère un "
     "segment existant par son indice i (n'invente pas d'indice).\n\n"
+    "L'utilisateur peut JOINDRE des fichiers : une image ou un PDF (que tu vois "
+    "directement) ou des données Excel/CSV (fournies en texte). Lis-les et "
+    "utilise leur contenu pour proposer des ajouts pertinents — par ex. "
+    "transformer un tableau d'image/Excel en op add_table, ou ses chiffres en "
+    "op add_chart.\n\n"
     "Réponds STRICTEMENT en JSON, sans texte autour :\n"
     '{ "reply": "<réponse en clair à l\'utilisateur>", "ops": [ ... ] }\n'
     "Chaque opération de \"ops\" est l'un de :\n"
@@ -374,11 +379,68 @@ _SYSTEM = (
 )
 
 
+# ---- fichiers joints au chat -------------------------------------------- #
+_IMG_MIME = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+             "webp": "image/webp", "gif": "image/gif"}
+UPLOAD_TYPES = ["png", "jpg", "jpeg", "webp", "pdf", "xlsx", "xls", "csv"]
+_MAX_MEDIA_BYTES = 12 * 1024 * 1024   # ~12 Mo par image/PDF (limite inline)
+_MAX_DOC_CHARS = 4000                 # par fichier tableur
+
+
+def _spreadsheet_to_text(name: str, data: bytes, ext: str) -> str:
+    import io
+    import pandas as pd
+    if ext == "csv":
+        df = pd.read_csv(io.BytesIO(data))
+        return f"Fichier {name} :\n" + df.head(60).to_csv(index=False)[:_MAX_DOC_CHARS]
+    sheets = pd.read_excel(io.BytesIO(data), sheet_name=None)  # toutes les feuilles
+    parts = []
+    for sh, df in sheets.items():
+        parts.append(f"Feuille « {sh} » ({name}) :\n"
+                     + df.head(60).to_csv(index=False)[:_MAX_DOC_CHARS])
+    return "\n\n".join(parts)
+
+
+def process_uploads(files: list[tuple]) -> tuple[list[dict], str, list[str], list[str]]:
+    """files : liste de (name, mime, data:bytes).
+    Renvoie (media, doc_text, labels, warnings) :
+      media  = [{mime, data}] pour images/PDF (envoyés tels quels à Gemini) ;
+      doc_text = données Excel/CSV converties en texte ;
+      labels = étiquettes pour l'affichage ; warnings = fichiers écartés."""
+    media, docs, labels, warns = [], [], [], []
+    for name, mime, data in files or []:
+        mime = mime or ""
+        ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        if ext in _IMG_MIME or mime.startswith("image/"):
+            if len(data) > _MAX_MEDIA_BYTES:
+                warns.append(f"{name} : image trop lourde (> 12 Mo), ignorée.")
+                continue
+            media.append({"mime": _IMG_MIME.get(ext, mime or "image/png"), "data": data})
+            labels.append(f"🖼️ {name}")
+        elif ext == "pdf" or mime == "application/pdf":
+            if len(data) > _MAX_MEDIA_BYTES:
+                warns.append(f"{name} : PDF trop lourd (> 12 Mo), ignoré.")
+                continue
+            media.append({"mime": "application/pdf", "data": data})
+            labels.append(f"📄 {name}")
+        elif ext in ("xlsx", "xls", "csv"):
+            try:
+                docs.append(_spreadsheet_to_text(name, data, ext))
+                labels.append(f"📊 {name}")
+            except Exception as exc:
+                warns.append(f"{name} : illisible ({exc}).")
+        else:
+            warns.append(f"{name} : type non pris en charge, ignoré.")
+    return media, "\n\n".join(docs), labels, warns
+
+
 def converse(history: list[dict], user_msg: str, segments: list[str],
-             model: str | None = None) -> tuple[str, list[dict]]:
-    """Envoie l'historique + le message + les segments à Gemini.
-    Renvoie (réponse_texte, edits). Lève RuntimeError avec un message clair
-    en cas de souci (clé absente, paquet manquant, erreur API)."""
+             model: str | None = None, media: list[dict] | None = None,
+             doc_text: str = "") -> tuple[str, list[dict]]:
+    """Envoie l'historique + le message + les segments (+ éventuellement des
+    fichiers joints) à Gemini. `media` = liste de {mime, data(bytes)} (images,
+    PDF — Gemini les lit nativement) ; `doc_text` = données extraites d'un
+    Excel/CSV. Renvoie (réponse_texte, ops). Lève RuntimeError si souci."""
     key = _key()
     if not key:
         raise RuntimeError("Aucune clé Gemini configurée.")
@@ -401,11 +463,21 @@ def converse(history: list[dict], user_msg: str, segments: list[str],
         f"CONVERSATION JUSQU'ICI :\n{convo}"
         f"NOUVEAU MESSAGE DE L'UTILISATEUR :\n{user_msg}"
     )
+    if doc_text:
+        prompt += ("\n\nDONNÉES DES FICHIERS JOINTS (Excel/CSV) — utilise-les "
+                   "pour construire tableaux/graphiques si demandé :\n" + doc_text)
+    # Multimodal : texte d'abord, puis les images/PDF joints.
+    contents: list = [prompt]
+    for m in media or []:
+        try:
+            contents.append(types.Part.from_bytes(data=m["data"], mime_type=m["mime"]))
+        except Exception:
+            pass
     used_model = model or _model_name()
     try:
         resp = client.models.generate_content(
             model=used_model,
-            contents=prompt,
+            contents=contents,
             config=types.GenerateContentConfig(
                 system_instruction=_SYSTEM,
                 response_mime_type="application/json",
