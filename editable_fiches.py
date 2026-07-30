@@ -117,13 +117,31 @@ def _render_ai(key: str, cur_html: str, modified: bool) -> None:
         msgs_key = f"ai_msgs_{key}"
         msgs = st.session_state.setdefault(msgs_key, [])
 
+        def send(ask, media=None, doc_text="", labels=None):
+            """Envoie une demande à l'assistant (utilisé par le formulaire ET
+            les actions rapides)."""
+            shown = (ask or "").strip() + (("\n\n📎 " + ", ".join(labels)) if labels else "")
+            msgs.append({"role": "user", "content": shown or "📎 (fichiers joints)"})
+            real = (ask or "").strip() or "Utilise le(s) fichier(s) joint(s) pour proposer des ajouts à la fiche."
+            with st.spinner("L'assistant réfléchit…"):
+                try:
+                    segs = ai_assistant.extract_segments(cur_html)
+                    reply, ops = ai_assistant.converse(
+                        msgs, real, segs, media=media or [], doc_text=doc_text)
+                except Exception as exc:  # clé invalide, paquet manquant, erreur API…
+                    reply, ops = str(exc), []
+            msgs.append({"role": "assistant", "content": reply, "ops": ops, "applied": False})
+            st.session_state[msgs_key] = msgs
+            st.rerun()
+
         if not msgs:
             st.caption(
-                "Demandez une modification : reformuler / corriger / traduire un texte, "
-                "**ajouter un tableau**, **ajouter un graphique** (barres ou courbe), ou "
-                "**supprimer** un élément. Les éléments ajoutés apparaissent dans la fiche "
-                "et se déplacent à la souris. L'assistant ne change pas les chiffres "
-                "existants sauf si vous le demandez."
+                "Demandez tout : **corriger / reformuler / traduire** un texte, le **mettre "
+                "en forme** (couleur, gras, taille), **ajouter** un tableau, un graphique "
+                "(barres/courbe), une **liste** de points, un **chiffre-clé** ou un **anneau %**, "
+                "ou **supprimer** un élément. Joignez une image / un PDF / un Excel pour en "
+                "extraire les données. Les éléments ajoutés se déplacent à la souris ; les "
+                "chiffres existants ne changent que si vous le demandez."
             )
 
         for m in msgs:
@@ -140,6 +158,9 @@ def _render_ai(key: str, cur_html: str, modified: bool) -> None:
                 st.caption("• " + ai_assistant.op_summary(o))
             c1, c2 = st.columns([1, 1])
             if c1.button("✅ Appliquer à la fiche", key=f"apply_{key}", type="primary"):
+                undo = st.session_state.setdefault(f"ai_undo_{key}", [])
+                undo.append(cur_html)   # état AVANT application (pour « Annuler »)
+                del undo[:-10]          # on garde les 10 derniers
                 new_html, n = ai_assistant.apply_ops(cur_html, ops)
                 last["applied"] = True
                 st.session_state[f"ai_html_{key}"] = new_html
@@ -151,6 +172,21 @@ def _render_ai(key: str, cur_html: str, modified: bool) -> None:
                 last["applied"] = True
                 st.session_state[msgs_key] = msgs
                 st.rerun()
+
+        # Actions rapides (un clic = une demande prête à l'emploi)
+        QUICK = [
+            ("🔤 Corriger", "Corrige toutes les fautes d'orthographe et de grammaire des textes de la fiche (op replace)."),
+            ("🇲🇦 En arabe", "Traduis en arabe les principaux titres et l'introduction de la fiche (op replace)."),
+            ("✨ Points clés", "Ajoute une liste (op add_list) de 3 à 4 points saillants qui synthétisent la fiche."),
+            ("📊 Tableau", "Ajoute un tableau (op add_table) pertinent qui résume des données présentes dans la fiche."),
+            ("📈 Graphique", "Ajoute un graphique (op add_chart) illustrant une évolution ou une comparaison de la fiche."),
+            ("🎨 Mise en forme", "Améliore la mise en forme : mets en valeur le titre et les chiffres clés (op style, couleurs bordeaux #7a1c3f / or #c8992e)."),
+        ]
+        st.caption("Actions rapides :")
+        qcols = st.columns(len(QUICK))
+        for idx, ((label, prompt), col) in enumerate(zip(QUICK, qcols)):
+            if col.button(label, key=f"q_{key}_{idx}", use_container_width=True):
+                send(prompt)
 
         # Zone de saisie
         with st.form(f"ai_form_{key}", clear_on_submit=True):
@@ -170,12 +206,20 @@ def _render_ai(key: str, cur_html: str, modified: bool) -> None:
             )
             sent = st.form_submit_button("Envoyer", type="primary")
 
-        cols = st.columns([1, 1, 2])
-        if msgs and cols[0].button("🗑️ Effacer le chat", key=f"clear_{key}"):
+        undo_stack = st.session_state.get(f"ai_undo_{key}", [])
+        bcols = st.columns(3)
+        if msgs and bcols[0].button("🗑️ Effacer le chat", key=f"clear_{key}", use_container_width=True):
             st.session_state.pop(msgs_key, None)
             st.rerun()
-        if modified and cols[1].button("↩️ Revenir au texte original", key=f"reset_{key}"):
+        if undo_stack and bcols[1].button("↶ Annuler la dernière modif", key=f"undo_{key}", use_container_width=True):
+            prev = undo_stack.pop()
+            st.session_state[f"ai_html_{key}"] = prev
+            fiche_store.save(key, prev)
+            st.session_state[f"ai_undo_{key}"] = undo_stack
+            st.rerun()
+        if modified and bcols[2].button("↩️ Revenir à l'original", key=f"reset_{key}", use_container_width=True):
             st.session_state.pop(f"ai_html_{key}", None)
+            st.session_state.pop(f"ai_undo_{key}", None)
             fiche_store.clear(key)  # efface aussi la version persistée
             st.rerun()
 
@@ -214,16 +258,4 @@ def _render_ai(key: str, cur_html: str, modified: bool) -> None:
                     [(f.name, f.type, f.getvalue()) for f in up])
             for w in warns:
                 st.warning(w)
-            shown = q.strip() + (("\n\n📎 " + ", ".join(labels)) if labels else "")
-            msgs.append({"role": "user", "content": shown or "📎 (fichiers joints)"})
-            ask = q.strip() or "Utilise le(s) fichier(s) joint(s) pour proposer des ajouts à la fiche."
-            with st.spinner("L'assistant réfléchit…"):
-                try:
-                    segs = ai_assistant.extract_segments(cur_html)
-                    reply, ops = ai_assistant.converse(
-                        msgs, ask, segs, media=media, doc_text=doc_text)
-                except Exception as exc:  # clé invalide, paquet manquant, erreur API…
-                    reply, ops = str(exc), []  # message déjà formaté par ai_assistant
-            msgs.append({"role": "assistant", "content": reply, "ops": ops, "applied": False})
-            st.session_state[msgs_key] = msgs
-            st.rerun()
+            send(q, media=media, doc_text=doc_text, labels=labels)

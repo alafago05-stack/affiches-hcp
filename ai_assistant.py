@@ -272,7 +272,46 @@ def _build_chart(op: dict, n: int) -> str | None:
     return f'<div style="{style}">{title_html}{"".join(parts)}{legend}</div>'
 
 
-_BUILDERS = {"add_text": _build_text, "add_table": _build_table, "add_chart": _build_chart}
+def _build_list(op: dict, n: int) -> str:
+    items = op.get("items") or []
+    lis = "".join(f'<li style="margin:2px 0;">{_esc(it)}</li>' for it in items)
+    title = op.get("title", "")
+    title_html = (f'<div style="font-size:12px;font-weight:700;color:#5a1330;'
+                  f'margin-bottom:4px;">{_esc(title)}</div>') if title else ""
+    style = _frag_style(n,
+        "max-width:70%;background:rgba(255,255,255,.92);border:1px dashed #c8992e;"
+        "border-radius:6px;padding:6px 10px;font-family:'Manrope',sans-serif;")
+    return (f'<div style="{style}">{title_html}<ul style="margin:0;padding-left:20px;'
+            f'font-size:11px;color:#3a2a30;line-height:1.45;">{lis}</ul></div>')
+
+
+def _build_kpi(op: dict, n: int) -> str:
+    color = _safe_color(op.get("color"), "#7a1c3f")
+    style = _frag_style(n,
+        "text-align:center;padding:8px 14px;background:#fff;border-radius:10px;"
+        "box-shadow:0 4px 14px rgba(90,19,48,.14);font-family:'Manrope',sans-serif;")
+    return (f'<div style="{style}"><div style="font-size:26px;font-weight:800;'
+            f'color:{color};line-height:1;">{_esc(op.get("value", ""))}</div>'
+            f'<div style="font-size:10px;color:#5a1330;margin-top:3px;">'
+            f'{_esc(op.get("label", ""))}</div></div>')
+
+
+def _build_donut(op: dict, n: int) -> str:
+    p = int(round(max(0.0, min(100.0, _num(op.get("percent"), 0)))))
+    color = _safe_color(op.get("color"), "#7a1c3f")
+    style = _frag_style(n, "font-family:'Manrope',sans-serif;")
+    return (f'<div style="{style}width:98px;height:98px;border-radius:50%;'
+            f'background:conic-gradient({color} 0% {p}%,#e9e3e6 {p}% 100%);'
+            f'display:flex;align-items:center;justify-content:center;">'
+            f'<div style="width:68px;height:68px;border-radius:50%;background:#fff;'
+            f'display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;">'
+            f'<span style="font-size:17px;font-weight:800;color:{color};">{p}%</span>'
+            f'<span style="font-size:8px;color:#5a1330;max-width:60px;line-height:1.1;">'
+            f'{_esc(op.get("label", ""))}</span></div></div>')
+
+
+_BUILDERS = {"add_text": _build_text, "add_table": _build_table, "add_chart": _build_chart,
+             "add_list": _build_list, "add_kpi": _build_kpi, "add_donut": _build_donut}
 
 
 def _deletable_ancestor(node, root):
@@ -319,6 +358,30 @@ def apply_ops(html_in: str, ops: list[dict]) -> tuple[str, int]:
                 if tgt is not None:
                     tgt.extract()
                     n += 1
+        elif kind == "style":
+            i = op.get("i")
+            if isinstance(i, int) and 0 <= i < len(nodes):
+                el = nodes[i].parent
+                if el is not None and el is not root and getattr(el, "name", None):
+                    add = []
+                    if op.get("color"):
+                        add.append(f"color:{_safe_color(op['color'], '#5a1330')}")
+                    if op.get("background"):
+                        add.append(f"background:{_safe_color(op['background'], 'transparent')}")
+                    if op.get("bold") is True:
+                        add.append("font-weight:700")
+                    if op.get("align") in ("left", "center", "right"):
+                        add.append(f"text-align:{op['align']}")
+                    sz = op.get("size")
+                    if isinstance(sz, (int, float)):
+                        add.append(f"font-size:{max(6, min(80, int(sz)))}px")
+                    elif sz in ("larger", "plus", "+", "bigger"):
+                        add.append("font-size:larger")
+                    elif sz in ("smaller", "moins", "-"):
+                        add.append("font-size:smaller")
+                    if add:
+                        el["style"] = (el.get("style", "") or "").rstrip(";") + ";" + ";".join(add)
+                        n += 1
         elif kind in _BUILDERS:
             frag = _BUILDERS[kind](op, ins)
             if frag:
@@ -372,6 +435,11 @@ _SYSTEM = (
     '• {"op":"add_table","title":"...","headers":["A","B"],"rows":[["1","2"],["3","4"]],"after":<indice|null>}\n'
     '• {"op":"add_chart","chart":"bar"|"line","title":"...","labels":["2019","2020"],'
     '"series":[{"name":"Taux","color":"#4a9d3f","values":[43.0,41.5]}],"after":<indice|null>}\n'
+    '• {"op":"style","i":<indice>,"color":"#c0392b","background":"#fff","bold":true,'
+    '"align":"center","size":18}  (mise en forme d\'un texte ; toutes les clés sont facultatives)\n'
+    '• {"op":"add_list","title":"...","items":["point 1","point 2","point 3"]}  (liste à puces)\n'
+    '• {"op":"add_kpi","value":"24 %","label":"Jeunes NEET","color":"#7a1c3f"}  (grand chiffre-clé)\n'
+    '• {"op":"add_donut","percent":61,"label":"Services","color":"#4a9d3f"}  (anneau de pourcentage)\n'
     "Règles : les valeurs de graphiques sont numériques ; les couleurs en hex "
     "(#rrggbb). Ne mets JAMAIS de balises HTML dans les textes — juste du texte "
     "brut. Les éléments ajoutés apparaissent dans la fiche et l'utilisateur peut "
@@ -605,6 +673,24 @@ def _clean_ops(data: dict) -> list[dict]:
                         "title": str(o.get("title", "")),
                         "labels": [str(x) for x in (o.get("labels") or [])],
                         "series": o.get("series") or []})
+        elif kind == "style" and isinstance(o.get("i"), int):
+            st = {"op": "style", "i": o["i"]}
+            for k in ("color", "background", "align", "size"):
+                if o.get(k) is not None:
+                    st[k] = o[k]
+            if o.get("bold") is not None:
+                st["bold"] = bool(o["bold"])
+            if len(st) > 2:  # au moins une propriété à changer
+                ops.append(st)
+        elif kind == "add_list" and o.get("items"):
+            ops.append({"op": "add_list", "title": str(o.get("title", "")),
+                        "items": [str(x) for x in o["items"]]})
+        elif kind == "add_kpi" and o.get("value") is not None:
+            ops.append({"op": "add_kpi", "value": str(o.get("value", "")),
+                        "label": str(o.get("label", "")), "color": o.get("color")})
+        elif kind == "add_donut" and o.get("percent") is not None:
+            ops.append({"op": "add_donut", "percent": o.get("percent"),
+                        "label": str(o.get("label", "")), "color": o.get("color")})
     return ops
 
 
@@ -621,4 +707,12 @@ def op_summary(op: dict) -> str:
         return f"➕ Ajouter un tableau ({len(op.get('rows') or [])} lignes)"
     if k == "add_chart":
         return f"➕ Ajouter un graphique {op.get('chart', '')} ({len(op.get('series') or [])} série(s))"
+    if k == "style":
+        return f"🎨 Mettre en forme le texte #{op.get('i')}"
+    if k == "add_list":
+        return f"➕ Ajouter une liste ({len(op.get('items') or [])} points)"
+    if k == "add_kpi":
+        return f"➕ Ajouter un chiffre-clé : {op.get('value', '')}"
+    if k == "add_donut":
+        return f"➕ Ajouter un anneau {op.get('percent', '')} %"
     return str(k)
