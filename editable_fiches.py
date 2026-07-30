@@ -161,6 +161,24 @@ def _render_ai(key: str, cur_html: str, modified: bool) -> None:
             st.session_state.pop(f"ai_html_{key}", None)
             st.rerun()
 
+        with st.expander("🔧 Modèles disponibles pour ma clé (diagnostic)"):
+            st.caption(
+                "En cas d'erreur « modèle introuvable » ou « quota », listez ici les "
+                "modèles que votre clé accepte, puis copiez-en un dans `model` sous "
+                "`[gemini]` dans les secrets."
+            )
+            if st.button("Lister les modèles Gemini", key=f"lm_{key}"):
+                with st.spinner("Interrogation de l'API…"):
+                    st.session_state[f"ai_models_{key}"] = ai_assistant.list_models()
+            models = st.session_state.get(f"ai_models_{key}")
+            if models:
+                flash = [m for m in models if "flash" in m]
+                st.markdown("**Modèles « flash » (rapides, recommandés) :**")
+                st.code("\n".join(flash) or "(aucun modèle « flash »)", language="text")
+                st.caption(f"{len(models)} modèle(s) au total pour votre clé.")
+            elif models == []:
+                st.warning("Aucun modèle listé (clé absente ou erreur d'accès).")
+
         if sent and q.strip():
             msgs.append({"role": "user", "content": q.strip()})
             with st.spinner("L'assistant réfléchit…"):

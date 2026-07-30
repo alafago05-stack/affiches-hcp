@@ -182,9 +182,10 @@ def converse(history: list[dict], user_msg: str, segments: list[str],
         f"CONVERSATION JUSQU'ICI :\n{convo}"
         f"NOUVEAU MESSAGE DE L'UTILISATEUR :\n{user_msg}"
     )
+    used_model = model or _model_name()
     try:
         resp = client.models.generate_content(
-            model=model or _model_name(),
+            model=used_model,
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=_SYSTEM,
@@ -194,24 +195,25 @@ def converse(history: list[dict], user_msg: str, segments: list[str],
         )
         raw = (resp.text or "").strip()
     except Exception as exc:
-        raise RuntimeError(_friendly_api_error(exc)) from exc
+        raise RuntimeError(_friendly_api_error(exc, used_model)) from exc
 
     # Parse JSON tolérant (au cas où le modèle enrobe le JSON).
     reply, edits = _parse_json_reply(raw)
     return reply, edits
 
 
-def _friendly_api_error(exc: Exception) -> str:
+def _friendly_api_error(exc: Exception, model: str | None = None) -> str:
     """Transforme une erreur d'API brute en message actionnable pour l'utilisateur."""
     code = getattr(exc, "code", None)
     s = str(exc)
     low = s.lower()
+    mdl = f" (modèle demandé : `{model}`)" if model else ""
     if code == 429 or "RESOURCE_EXHAUSTED" in s or "quota" in low:
         return (
-            "🚦 Quota Gemini épuisé pour ce modèle. Souvent, le projet Google n'a "
-            "**aucun palier gratuit** pour ce modèle/région. Deux options :\n\n"
-            "• Essayez un autre modèle : ajoutez `model = \"gemini-1.5-flash\"` sous "
-            "`[gemini]` dans les secrets.\n"
+            f"🚦 Quota Gemini épuisé{mdl}. Souvent, le projet Google n'a **aucun "
+            "palier gratuit** pour ce modèle/région. Deux options :\n\n"
+            "• Essayez un modèle actuel (`gemini-2.5-flash`, `gemini-2.5-flash-lite`) "
+            "via `model` dans les secrets — voir « 🔧 Modèles disponibles » ci-dessous.\n"
             "• Ou activez la **facturation** sur votre projet Google (Gemini Flash "
             "coûte quelques centimes par million de tokens)."
         )
@@ -219,10 +221,34 @@ def _friendly_api_error(exc: Exception) -> str:
         return "🔑 Clé API invalide — vérifiez `api_key` sous `[gemini]` dans les secrets."
     if code == 404 or "NOT_FOUND" in s:
         return (
-            "🔎 Modèle introuvable — changez `model` sous `[gemini]` dans les secrets "
-            "(ex. `gemini-1.5-flash` ou `gemini-flash-latest`)."
+            f"🔎 Modèle introuvable{mdl}. Mettez `model` sous `[gemini]` dans les "
+            "secrets sur un modèle **actuel** — ex. `gemini-2.5-flash`, "
+            "`gemini-2.5-flash-lite` ou l'alias `gemini-flash-latest`. Cliquez "
+            "« 🔧 Modèles disponibles » ci-dessous pour voir la liste exacte de votre clé."
         )
     return f"⚠️ Erreur de l'API Gemini : {exc}"
+
+
+def list_models() -> list[str]:
+    """Noms des modèles accessibles avec la clé configurée (diagnostic).
+    Ne garde que ceux qui supportent generateContent. Ne lève jamais."""
+    key = _key()
+    if not key:
+        return []
+    try:
+        client = _client(key)
+        out = []
+        for m in client.models.list():
+            name = (getattr(m, "name", "") or "").replace("models/", "")
+            if not name:
+                continue
+            actions = getattr(m, "supported_actions", None) or []
+            if actions and "generateContent" not in actions:
+                continue
+            out.append(name)
+        return sorted(set(out))
+    except Exception as exc:
+        return [f"⚠️ erreur en listant les modèles : {exc}"]
 
 
 def _parse_json_reply(raw: str) -> tuple[str, list[dict]]:
