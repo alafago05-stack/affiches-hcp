@@ -115,9 +115,11 @@ def _render_ai(key: str, cur_html: str, modified: bool) -> None:
 
         if not msgs:
             st.caption(
-                "Demandez une amélioration du texte : reformuler, raccourcir, corriger les "
-                "fautes, traduire en arabe, proposer des points saillants… "
-                "L'assistant ne change pas les chiffres sauf si vous le demandez."
+                "Demandez une modification : reformuler / corriger / traduire un texte, "
+                "**ajouter un tableau**, **ajouter un graphique** (barres ou courbe), ou "
+                "**supprimer** un élément. Les éléments ajoutés apparaissent dans la fiche "
+                "et se déplacent à la souris. L'assistant ne change pas les chiffres "
+                "existants sauf si vous le demandez."
             )
 
         for m in msgs:
@@ -127,15 +129,18 @@ def _render_ai(key: str, cur_html: str, modified: bool) -> None:
         # Bouton « Appliquer » sur la DERNIÈRE proposition non appliquée
         # (indices de segments frais → application fiable).
         last = msgs[-1] if msgs and msgs[-1]["role"] == "assistant" else None
-        if last and last.get("edits") and not last.get("applied"):
-            st.caption(f"💡 {len(last['edits'])} modification(s) proposée(s) pour la fiche.")
+        if last and last.get("ops") and not last.get("applied"):
+            ops = last["ops"]
+            st.caption(f"💡 {len(ops)} opération(s) proposée(s) :")
+            for o in ops[:8]:
+                st.caption("• " + ai_assistant.op_summary(o))
             c1, c2 = st.columns([1, 1])
             if c1.button("✅ Appliquer à la fiche", key=f"apply_{key}", type="primary"):
-                new_html, n = ai_assistant.apply_edits(cur_html, last["edits"])
+                new_html, n = ai_assistant.apply_ops(cur_html, ops)
                 last["applied"] = True
                 st.session_state[f"ai_html_{key}"] = new_html
                 st.session_state[msgs_key] = msgs
-                st.toast(f"✅ {n} modification(s) appliquée(s).")
+                st.toast(f"✅ {n} opération(s) appliquée(s).")
                 st.rerun()
             if c2.button("Ignorer", key=f"ignore_{key}"):
                 last["applied"] = True
@@ -146,8 +151,8 @@ def _render_ai(key: str, cur_html: str, modified: bool) -> None:
         with st.form(f"ai_form_{key}", clear_on_submit=True):
             q = st.text_area(
                 "Votre demande",
-                placeholder="ex : raccourcis l'introduction et corrige les fautes ; "
-                "traduis le titre en arabe ; propose 3 points saillants…",
+                placeholder="ex : ajoute un tableau du chômage par région ; ajoute un "
+                "graphique en barres 2024 vs 2025 ; raccourcis l'intro ; traduis en arabe…",
                 label_visibility="collapsed",
                 height=70,
             )
@@ -194,9 +199,9 @@ def _render_ai(key: str, cur_html: str, modified: bool) -> None:
             with st.spinner("L'assistant réfléchit…"):
                 try:
                     segs = ai_assistant.extract_segments(cur_html)
-                    reply, edits = ai_assistant.converse(msgs, q.strip(), segs)
+                    reply, ops = ai_assistant.converse(msgs, q.strip(), segs)
                 except Exception as exc:  # clé invalide, paquet manquant, erreur API…
-                    reply, edits = str(exc), []  # message déjà formaté par ai_assistant
-            msgs.append({"role": "assistant", "content": reply, "edits": edits, "applied": False})
+                    reply, ops = str(exc), []  # message déjà formaté par ai_assistant
+            msgs.append({"role": "assistant", "content": reply, "ops": ops, "applied": False})
             st.session_state[msgs_key] = msgs
             st.rerun()

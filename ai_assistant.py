@@ -116,45 +116,261 @@ def extract_segments(html: str) -> list[str]:
     return [s[:_MAX_SEG_LEN] for s in segs[:_MAX_SEGMENTS]]
 
 
-def apply_edits(html: str, edits: list[dict]) -> tuple[str, int]:
-    """Applique des modifs {i:<indice>, replace:<texte>} au HTML.
-    Renvoie (html_modifié, nombre_de_modifs_appliquées). Le remplacement se
-    fait sur le TEXTE (BeautifulSoup échappe automatiquement < > & en sortie)."""
-    from bs4 import NavigableString
-    soup, nodes = _text_nodes(html)
-    n = 0
-    for e in edits or []:
-        i, rep = e.get("i"), e.get("replace")
-        if not isinstance(i, int) or rep is None or not (0 <= i < len(nodes)):
+# --------------------------------------------------------------------------- #
+#  Application des opérations de l'IA (remplacer / supprimer / ajouter)        #
+# --------------------------------------------------------------------------- #
+import html as _html  # échappement pour les fragments construits
+
+# html.parser met en minuscule les attributs SVG en camelCase (viewBox ->
+# viewbox), ce qui CASSE le rendu SVG. On restaure la casse après sérialisation.
+_SVG_CAMEL = ["viewBox", "preserveAspectRatio", "gradientUnits", "gradientTransform",
+              "patternUnits", "patternContentUnits", "clipPath", "clipPathUnits",
+              "spreadMethod", "markerWidth", "markerHeight", "refX", "refY",
+              "textLength", "lengthAdjust", "baseProfile"]
+
+_PALETTE = ["#4a9d3f", "#2f6fb0", "#cf3b2c", "#c8992e", "#7a1c3f", "#3f7a6a"]
+_HEXRE = re.compile(r"^#[0-9a-fA-F]{3,8}$")
+_NAMEDCOLORS = {"red", "green", "blue", "orange", "purple", "teal", "gray", "grey",
+                "black", "gold", "maroon", "navy", "olive", "brown", "crimson", "white"}
+
+
+def _restore_svg_case(html_out: str) -> str:
+    for name in _SVG_CAMEL:
+        html_out = re.sub(r"\b" + name.lower() + r"=", name + "=", html_out)
+    return html_out
+
+
+def _esc(s) -> str:
+    return _html.escape(str(s), quote=True)
+
+
+def _num(v, default=0.0) -> float:
+    try:
+        return float(str(v).replace(" ", "").replace(",", ".").strip())
+    except Exception:
+        return default
+
+
+def _safe_color(c, default: str) -> str:
+    c = str(c or "").strip()
+    return c if (_HEXRE.match(c) or c.lower() in _NAMEDCOLORS) else default
+
+
+def _fmt(v: float) -> str:            # 43.0 -> "43,0" (décimal => éditable par le panneau)
+    return f"{round(v, 1):.1f}".replace(".", ",")
+
+
+def _frag_style(n: int, extra: str = "") -> str:
+    # placement par défaut en cascade ; l'utilisateur déplace ensuite (glisser).
+    return f"position:absolute; left:44px; top:{150 + (n % 12) * 30}px; z-index:60; {extra}"
+
+
+def _build_text(op: dict, n: int) -> str:
+    tag = str(op.get("tag", "p"))
+    big = tag in ("h1", "h2", "h3", "title")
+    style = _frag_style(n,
+        "max-width:70%; padding:6px 10px; background:rgba(255,255,255,.92); "
+        "border:1px dashed #c8992e; border-radius:6px; font-family:'Manrope',sans-serif; "
+        f"color:#5a1330; font-size:{17 if big else 12}px; font-weight:{700 if big else 400}; line-height:1.35;")
+    return f'<div style="{style}">{_esc(op.get("text", ""))}</div>'
+
+
+def _build_table(op: dict, n: int) -> str:
+    headers = op.get("headers") or []
+    rows = op.get("rows") or []
+    th = "".join(
+        f'<th style="background:#7a1c3f;color:#fff;padding:4px 9px;text-align:left;'
+        f'border:1px solid #e0d5cc;font-weight:700;">{_esc(h)}</th>' for h in headers)
+    body = ""
+    for r in rows:
+        cells = r if isinstance(r, list) else [r]
+        body += "<tr>" + "".join(
+            f'<td style="padding:4px 9px;border:1px solid #e0d5cc;">{_esc(c)}</td>'
+            for c in cells) + "</tr>"
+    title = op.get("title", "")
+    title_html = (f'<div style="font-size:12px;font-weight:700;color:#5a1330;'
+                  f'margin-bottom:6px;">{_esc(title)}</div>') if title else ""
+    style = _frag_style(n,
+        "background:#fff;border:1px solid #e0d5cc;border-radius:8px;padding:8px 10px;"
+        "box-shadow:0 4px 14px rgba(90,19,48,.14);font-family:'Manrope',sans-serif;")
+    return (f'<div style="{style}">{title_html}'
+            f'<table style="border-collapse:collapse;font-size:11px;color:#3a2a30;">'
+            f'{("<thead><tr>" + th + "</tr></thead>") if th else ""}'
+            f'<tbody>{body}</tbody></table></div>')
+
+
+def _build_chart(op: dict, n: int) -> str | None:
+    ctype = str(op.get("chart", "bar")).lower()
+    labels = [str(x) for x in (op.get("labels") or [])]
+    series = []
+    for si, s in enumerate(op.get("series") or []):
+        if not isinstance(s, dict):
             continue
-        orig = str(nodes[i])
-        lead = orig[: len(orig) - len(orig.lstrip())]
-        trail = orig[len(orig.rstrip()):]
-        nodes[i].replace_with(NavigableString(lead + str(rep) + trail))
-        n += 1
-    return (str(soup), n) if n else (html, 0)
+        vals = [_num(v) for v in (s.get("values") or [])]
+        if vals:
+            series.append({"name": s.get("name", ""),
+                           "color": _safe_color(s.get("color"), _PALETTE[si % len(_PALETTE)]),
+                           "values": vals})
+    if not series:
+        return None
+    N = max(len(labels), max(len(s["values"]) for s in series))
+    if N == 0:
+        return None
+    maxv = max((v for s in series for v in s["values"]), default=1.0) or 1.0
+    W = max(240, 46 * N + 30)
+    H = 190
+    padL, padR, top, bottom = 12, 12, 16, 22
+    plotW = W - padL - padR
+    plotH = H - top - bottom
+    baseY = H - bottom
+
+    def X(i):  # centre de la i-ème colonne
+        return round(padL + (i + 0.5) * plotW / N, 1)
+
+    def Y(v):
+        return round(baseY - plotH * (v / maxv), 1)
+
+    parts = [f'<svg width="{W}" height="{H}" viewBox="0 0 {W} {H}" '
+             f'xmlns="http://www.w3.org/2000/svg" style="overflow:visible;font-family:\'Manrope\',sans-serif;">']
+    # ligne de base
+    parts.append(f'<line x1="{padL}" y1="{baseY}" x2="{W-padR}" y2="{baseY}" stroke="#d9cfc6" stroke-width="1"/>')
+
+    if ctype == "line":
+        for s in series:
+            pts = " ".join(f"{X(i)},{Y(v)}" for i, v in enumerate(s["values"]))
+            parts.append(f'<polyline points="{pts}" fill="none" stroke="{s["color"]}" stroke-width="2"/>')
+            for i, v in enumerate(s["values"]):
+                cx, cy = X(i), Y(v)
+                parts.append(f'<circle cx="{cx}" cy="{cy}" r="3" fill="{s["color"]}"/>')
+                parts.append(f'<text x="{cx}" y="{cy-6}" text-anchor="middle" font-size="9" fill="#3a2a30">{_fmt(v)}</text>')
+    else:  # barres (première série)
+        vals = series[0]["values"]
+        color = series[0]["color"]
+        bw = max(6, plotW / max(1, len(vals)) * 0.55)
+        for i, v in enumerate(vals):
+            cx = X(i)
+            h = round(plotH * (v / maxv), 1)
+            y = round(baseY - h, 1)
+            parts.append(f'<rect x="{round(cx-bw/2,1)}" y="{y}" width="{round(bw,1)}" height="{h}" rx="2" fill="{color}"/>')
+            parts.append(f'<text x="{cx}" y="{y-3}" text-anchor="middle" font-size="9" fill="#3a2a30">{_fmt(v)}</text>')
+
+    for i, lb in enumerate(labels[:N]):
+        parts.append(f'<text x="{X(i)}" y="{H-6}" text-anchor="middle" font-size="9" fill="#5a1330">{_esc(lb)}</text>')
+    parts.append("</svg>")
+
+    title = op.get("title", "")
+    title_html = (f'<div style="font-size:12px;font-weight:700;color:#5a1330;'
+                  f'margin-bottom:4px;">{_esc(title)}</div>') if title else ""
+    legend = ""
+    if ctype == "line" and len(series) > 1:
+        legend = '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px;font-size:9px;color:#3a2a30;">' + "".join(
+            f'<span><span style="display:inline-block;width:9px;height:9px;border-radius:50%;'
+            f'background:{s["color"]};margin-right:3px;"></span>{_esc(s["name"])}</span>' for s in series) + "</div>"
+    style = _frag_style(n,
+        "background:#fff;border:1px solid #e0d5cc;border-radius:8px;padding:8px 10px;"
+        "box-shadow:0 4px 14px rgba(90,19,48,.14);")
+    return f'<div style="{style}">{title_html}{"".join(parts)}{legend}</div>'
+
+
+_BUILDERS = {"add_text": _build_text, "add_table": _build_table, "add_chart": _build_chart}
+
+
+def _deletable_ancestor(node, root):
+    """Élément à retirer pour 'supprimer' le segment : le parent direct porteur
+    du texte, sans jamais remonter jusqu'à la racine."""
+    el = node.parent
+    return el if (el is not None and el is not root) else None
+
+
+def apply_ops(html_in: str, ops: list[dict]) -> tuple[str, int]:
+    """Applique les opérations de l'IA : replace / delete / add_text / add_table
+    / add_chart. Renvoie (html_modifié, nb_appliquées).
+
+    Sûreté : tout texte est ÉCHAPPÉ (html.escape ou nœud BeautifulSoup) ; les
+    ajouts sont des fragments construits par NOUS (l'IA ne fournit que des
+    données), insérés via marqueurs pour éviter que la re-sérialisation ne
+    déforme leur SVG. La casse des attributs SVG existants est restaurée."""
+    from bs4 import BeautifulSoup, NavigableString
+    soup = BeautifulSoup(html_in, "html.parser")
+    root = soup.select_one(".dc-fiche") or soup
+    nodes = [t for t in root.find_all(string=True)
+             if not any(getattr(p, "name", None) in _SKIP_ANCESTORS for p in t.parents)
+             and _meaningful(str(t))]
+    if getattr(root, "name", None) and "position" not in (root.get("style", "") or ""):
+        root["style"] = (root.get("style", "") or "") + ";position:relative"
+
+    pending, n, ins = {}, 0, 0
+    for op in ops or []:
+        if not isinstance(op, dict):
+            continue
+        kind = op.get("op")
+        if kind == "replace":
+            i, txt = op.get("i"), op.get("text")
+            if isinstance(i, int) and txt is not None and 0 <= i < len(nodes):
+                orig = str(nodes[i])
+                lead = orig[: len(orig) - len(orig.lstrip())]
+                trail = orig[len(orig.rstrip()):]
+                nodes[i].replace_with(NavigableString(lead + str(txt) + trail))
+                n += 1
+        elif kind == "delete":
+            i = op.get("i")
+            if isinstance(i, int) and 0 <= i < len(nodes):
+                tgt = _deletable_ancestor(nodes[i], root)
+                if tgt is not None:
+                    tgt.extract()
+                    n += 1
+        elif kind in _BUILDERS:
+            frag = _BUILDERS[kind](op, ins)
+            if frag:
+                token = f"__AIINS_{ins}__"
+                marker = soup.new_tag("div")
+                marker["data-ai-ins"] = "1"
+                marker.string = token
+                root.append(marker)
+                pending[token] = frag
+                ins += 1
+                n += 1
+
+    if not n:
+        return html_in, 0
+    out = _restore_svg_case(str(soup))
+    for token, frag in pending.items():
+        out = out.replace(token, frag, 1)
+    return out, n
+
+
+def apply_edits(html: str, edits: list[dict]) -> tuple[str, int]:
+    """Compat : ancien format {i, replace} -> opérations replace."""
+    return apply_ops(html, [{"op": "replace", "i": e.get("i"), "text": e.get("replace")}
+                            for e in (edits or []) if isinstance(e, dict)])
 
 
 # --------------------------------------------------------------------------- #
 #  Conversation avec Gemini                                                    #
 # --------------------------------------------------------------------------- #
 _SYSTEM = (
-    "Tu es l'assistant de rédaction d'une fiche infographique du HCP "
-    "(Haut-Commissariat au Plan, Maroc) sur le marché du travail. Tu aides à "
-    "améliorer le CONTENU TEXTUEL : reformuler, raccourcir, corriger "
-    "l'orthographe/grammaire, traduire (français ↔ arabe), harmoniser le ton "
-    "institutionnel, proposer des points saillants. Tu NE changes JAMAIS les "
-    "chiffres/pourcentages sauf demande explicite. Tu écris dans la langue de "
-    "la fiche (ou celle demandée). Reste factuel et concis.\n\n"
-    "On te fournit les SEGMENTS de texte de la fiche, numérotés [i]. Pour "
-    "proposer une modification concrète d'un segment existant, référence-le "
-    "par son indice i (n'invente pas d'indice). Ne touche qu'aux segments à "
-    "modifier.\n\n"
-    "Réponds STRICTEMENT en JSON, sans texte autour, avec ce schéma :\n"
-    '{ "reply": "<ta réponse à l\'utilisateur, en clair>", '
-    '"edits": [ { "i": <indice du segment>, "replace": "<nouveau texte>" } ] }\n'
-    'Si tu ne fais que discuter/expliquer sans modifier la fiche, renvoie '
-    '"edits": []. Ne mets jamais de balises HTML dans "replace".'
+    "Tu es l'assistant d'édition d'une fiche infographique du HCP "
+    "(Haut-Commissariat au Plan, Maroc) sur le marché du travail. Tu peux "
+    "améliorer le texte (reformuler, raccourcir, corriger, traduire FR↔AR, ton "
+    "institutionnel), MAIS AUSSI modifier la STRUCTURE : ajouter du texte, des "
+    "tableaux, des graphiques, ou supprimer un élément. Tu NE changes jamais les "
+    "chiffres existants sauf demande explicite. Écris dans la langue demandée. "
+    "Concis et factuel.\n\n"
+    "On te fournit les SEGMENTS de texte de la fiche, numérotés [i]. Réfère un "
+    "segment existant par son indice i (n'invente pas d'indice).\n\n"
+    "Réponds STRICTEMENT en JSON, sans texte autour :\n"
+    '{ "reply": "<réponse en clair à l\'utilisateur>", "ops": [ ... ] }\n'
+    "Chaque opération de \"ops\" est l'un de :\n"
+    '• {"op":"replace","i":<indice>,"text":"<nouveau texte>"}  (remplace un segment)\n'
+    '• {"op":"delete","i":<indice>}  (supprime l\'élément du segment)\n'
+    '• {"op":"add_text","tag":"h3"|"p","text":"...","after":<indice|null>}\n'
+    '• {"op":"add_table","title":"...","headers":["A","B"],"rows":[["1","2"],["3","4"]],"after":<indice|null>}\n'
+    '• {"op":"add_chart","chart":"bar"|"line","title":"...","labels":["2019","2020"],'
+    '"series":[{"name":"Taux","color":"#4a9d3f","values":[43.0,41.5]}],"after":<indice|null>}\n'
+    "Règles : les valeurs de graphiques sont numériques ; les couleurs en hex "
+    "(#rrggbb). Ne mets JAMAIS de balises HTML dans les textes — juste du texte "
+    "brut. Les éléments ajoutés apparaissent dans la fiche et l'utilisateur peut "
+    "les déplacer. Si tu ne fais que discuter, renvoie \"ops\": []."
 )
 
 
@@ -201,8 +417,8 @@ def converse(history: list[dict], user_msg: str, segments: list[str],
         raise RuntimeError(_friendly_api_error(exc, used_model)) from exc
 
     # Parse JSON tolérant (au cas où le modèle enrobe le JSON).
-    reply, edits = _parse_json_reply(raw)
-    return reply, edits
+    reply, ops = _parse_json_reply(raw)
+    return reply, ops
 
 
 def _friendly_api_error(exc: Exception, model: str | None = None) -> str:
@@ -286,10 +502,51 @@ def _parse_json_reply(raw: str) -> tuple[str, list[dict]]:
         except Exception:
             return raw, []
     reply = str(data.get("reply", "")).strip() or "(aucune réponse)"
-    edits = data.get("edits") or []
-    clean = [
-        {"i": e["i"], "replace": str(e.get("replace", ""))}
-        for e in edits
-        if isinstance(e, dict) and isinstance(e.get("i"), int)
-    ]
-    return reply, clean
+    return reply, _clean_ops(data)
+
+
+def _clean_ops(data: dict) -> list[dict]:
+    """Valide/normalise les opérations. Accepte le nouveau format `ops` et
+    l'ancien `edits` ({i, replace} -> op replace)."""
+    ops = []
+    for e in data.get("edits") or []:
+        if isinstance(e, dict) and isinstance(e.get("i"), int):
+            ops.append({"op": "replace", "i": e["i"], "text": str(e.get("replace", ""))})
+    for o in data.get("ops") or []:
+        if not isinstance(o, dict):
+            continue
+        kind = o.get("op")
+        if kind == "replace" and isinstance(o.get("i"), int):
+            ops.append({"op": "replace", "i": o["i"], "text": str(o.get("text", ""))})
+        elif kind == "delete" and isinstance(o.get("i"), int):
+            ops.append({"op": "delete", "i": o["i"]})
+        elif kind == "add_text" and o.get("text"):
+            ops.append({"op": "add_text", "tag": str(o.get("tag", "p")),
+                        "text": str(o["text"])})
+        elif kind == "add_table" and (o.get("headers") or o.get("rows")):
+            ops.append({"op": "add_table", "title": str(o.get("title", "")),
+                        "headers": [str(h) for h in (o.get("headers") or [])],
+                        "rows": [[str(c) for c in (r if isinstance(r, list) else [r])]
+                                 for r in (o.get("rows") or [])]})
+        elif kind == "add_chart" and o.get("series"):
+            ops.append({"op": "add_chart", "chart": str(o.get("chart", "bar")),
+                        "title": str(o.get("title", "")),
+                        "labels": [str(x) for x in (o.get("labels") or [])],
+                        "series": o.get("series") or []})
+    return ops
+
+
+def op_summary(op: dict) -> str:
+    """Libellé lisible d'une opération (pour l'aperçu avant application)."""
+    k = op.get("op")
+    if k == "replace":
+        return f"✏️ Modifier le texte #{op.get('i')}"
+    if k == "delete":
+        return f"🗑️ Supprimer l'élément #{op.get('i')}"
+    if k == "add_text":
+        return f"➕ Ajouter un texte : « {op.get('text', '')[:40]} »"
+    if k == "add_table":
+        return f"➕ Ajouter un tableau ({len(op.get('rows') or [])} lignes)"
+    if k == "add_chart":
+        return f"➕ Ajouter un graphique {op.get('chart', '')} ({len(op.get('series') or [])} série(s))"
+    return str(k)
