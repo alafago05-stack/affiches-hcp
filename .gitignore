@@ -4,6 +4,9 @@
 # Base des signalements en local
 support/tickets.db
 
+# Fiches modifiées enregistrées à l'exécution (persistance des modifs IA)
+html_fiches/_saved/
+
 # Fichiers Excel de données (les utilisateurs déposent les leurs dans l'app ;
 # inutile de publier des données HCP dans le dépôt)
 *.xlsx

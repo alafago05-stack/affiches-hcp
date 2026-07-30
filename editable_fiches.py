@@ -13,6 +13,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 import ai_assistant
+import fiche_store
 
 HTML_DIR = Path(__file__).parent / "html_fiches"
 
@@ -53,10 +54,12 @@ def render() -> None:
         return
     base_html = path.read_text(encoding="utf-8")
 
-    # HTML courant = version modifiée par l'IA si elle existe, sinon l'original.
+    # HTML courant = modifs de la session en cours ; sinon la version PERSISTÉE
+    # (survit au rafraîchissement de la page) ; sinon la fiche d'origine.
     html_key = f"ai_html_{key}"
-    cur_html = st.session_state.get(html_key, base_html)
-    modified = html_key in st.session_state
+    persisted = fiche_store.load(key)
+    cur_html = st.session_state.get(html_key, persisted or base_html)
+    modified = (html_key in st.session_state) or (persisted is not None)
 
     col1, col2 = st.columns([1, 2])
     with col1:
@@ -79,7 +82,8 @@ def render() -> None:
     st.divider()
     st.markdown("**Aperçu interactif** — essayez de cliquer sur un texte, un chiffre, un anneau :")
     if modified:
-        st.caption("✏️ Cet aperçu reflète les modifications appliquées par l'assistant IA.")
+        st.caption("💾 Modifications **enregistrées** — elles restent en place même après "
+                   "rafraîchissement de la page (bouton « ↩️ Revenir au texte original » pour tout effacer).")
     components.html(cur_html, height=f["height"], scrolling=True)
 
 
@@ -139,8 +143,9 @@ def _render_ai(key: str, cur_html: str, modified: bool) -> None:
                 new_html, n = ai_assistant.apply_ops(cur_html, ops)
                 last["applied"] = True
                 st.session_state[f"ai_html_{key}"] = new_html
+                fiche_store.save(key, new_html)  # persiste (survit au rafraîchissement)
                 st.session_state[msgs_key] = msgs
-                st.toast(f"✅ {n} opération(s) appliquée(s).")
+                st.toast(f"✅ {n} opération(s) appliquée(s) — enregistrée(s).")
                 st.rerun()
             if c2.button("Ignorer", key=f"ignore_{key}"):
                 last["applied"] = True
@@ -171,6 +176,7 @@ def _render_ai(key: str, cur_html: str, modified: bool) -> None:
             st.rerun()
         if modified and cols[1].button("↩️ Revenir au texte original", key=f"reset_{key}"):
             st.session_state.pop(f"ai_html_{key}", None)
+            fiche_store.clear(key)  # efface aussi la version persistée
             st.rerun()
 
         with st.expander("🔧 Modèles disponibles pour ma clé (diagnostic)"):
