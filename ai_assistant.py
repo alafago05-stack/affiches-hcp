@@ -25,7 +25,10 @@ import re
 
 import streamlit as st
 
-DEFAULT_MODEL = "gemini-2.5-flash"  # modèle actuel ; surchargeable via secrets
+# Alias vers le modèle « flash » courant : immunise contre le retrait des
+# versions anciennes (les comptes récents n'ont plus accès à 2.0/2.5-flash).
+# Surchargeable via le secret [gemini] model.
+DEFAULT_MODEL = "gemini-flash-latest"
 
 # Bornes de sûreté pour ne pas envoyer un prompt démesuré à l'API.
 _MAX_SEGMENTS = 500
