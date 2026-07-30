@@ -179,6 +179,16 @@ def _render_ai(key: str, cur_html: str, modified: bool) -> None:
             elif models == []:
                 st.warning("Aucun modèle listé (clé absente ou erreur d'accès).")
 
+            st.divider()
+            probe_m = st.text_input("Tester un modèle précis (appel réel)",
+                                    value="gemini-2.5-flash", key=f"pm_{key}")
+            if st.button("Tester ce modèle", key=f"pb_{key}"):
+                with st.spinner("Appel test…"):
+                    st.session_state[f"ai_probe_{key}"] = ai_assistant.probe_model(probe_m.strip())
+            res = st.session_state.get(f"ai_probe_{key}")
+            if res:
+                st.code(res, language="text")
+
         if sent and q.strip():
             msgs.append({"role": "user", "content": q.strip()})
             with st.spinner("L'assistant réfléchit…"):

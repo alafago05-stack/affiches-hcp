@@ -229,6 +229,24 @@ def _friendly_api_error(exc: Exception, model: str | None = None) -> str:
     return f"⚠️ Erreur de l'API Gemini : {exc}"
 
 
+def probe_model(model: str) -> str:
+    """Mini-appel generateContent réel : renvoie le message BRUT (OK ou erreur
+    complète de Google), pour diagnostiquer un 404/quota précis. Ne lève pas."""
+    key = _key()
+    if not key:
+        return "(pas de clé configurée)"
+    try:
+        from google.genai import types
+        client = _client(key)
+        r = client.models.generate_content(
+            model=model, contents="ping",
+            config=types.GenerateContentConfig(max_output_tokens=5),
+        )
+        return f"✅ OK — « {model} » répond : {(r.text or '').strip()[:60] or '(vide)'}"
+    except Exception as exc:
+        return f"❌ {type(exc).__name__} sur « {model} » :\n{exc}"
+
+
 def list_models() -> list[str]:
     """Noms des modèles accessibles avec la clé configurée (diagnostic).
     Ne garde que ceux qui supportent generateContent. Ne lève jamais."""
