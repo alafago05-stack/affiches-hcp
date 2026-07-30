@@ -49,7 +49,9 @@ def _key() -> str | None:
         g = st.secrets.get("gemini")
         if g:
             k = str(g.get("api_key") or "").strip()
-            if k and k != "AIza...":  # ignore le placeholder non modifié
+            # Accepte tout format de clé (AIza…, AQ.…) ; rejette seulement le
+            # placeholder non modifié (les vrais clés ne contiennent pas "...").
+            if k and "..." not in k:
                 return k
     except Exception:
         pass

@@ -97,7 +97,8 @@ def _render_ai(key: str, cur_html: str, modified: bool) -> None:
                 st.markdown(
                     "Aucune clé Gemini n'est configurée (le reste de l'app fonctionne normalement).\n\n"
                     "1. Récupérez une clé gratuite sur "
-                    "[Google AI Studio](https://aistudio.google.com/apikey) (elle commence par `AIza…`).\n"
+                    "[Google AI Studio](https://aistudio.google.com/apikey) "
+                    "(format `AIza…` ou `AQ.…`, les deux marchent).\n"
                     "2. **En local** : copiez `.streamlit/secrets.toml.example` en "
                     "`.streamlit/secrets.toml` et collez la clé sous `[gemini]`.\n"
                     "3. **En ligne** (Streamlit Cloud) : votre app > **Settings > Secrets**, "
