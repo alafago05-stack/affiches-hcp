@@ -61,30 +61,43 @@ def render() -> None:
     cur_html = st.session_state.get(html_key, persisted or base_html)
     modified = (html_key in st.session_state) or (persisted is not None)
 
-    col1, col2 = st.columns([1, 2])
+    # Thème de couleurs (design) — persisté, orthogonal au contenu.
+    themes = ai_assistant.theme_labels()
+    theme_key = f"theme_{key}"
+    if theme_key not in st.session_state:
+        st.session_state[theme_key] = fiche_store.load_theme(key) or "bordeaux"
+    theme = st.session_state[theme_key]
+    display_html = ai_assistant.recolor(cur_html, theme)  # ce qu'on montre/télécharge
+    changed = modified or theme != "bordeaux"
+
+    col1, col2, col3 = st.columns([1.3, 1, 2])
     with col1:
         st.download_button(
-            "⬇️ Télécharger le modèle" + (" (modifié)" if modified else " (vierge)"),
-            data=cur_html,
+            "⬇️ Télécharger" + (" (modifié)" if changed else " (vierge)"),
+            data=display_html,
             file_name=f["file"],
             mime="text/html",
             help="Ouvrez-le dans votre navigateur pour éditer en place et exporter le PDF.",
         )
     with col2:
+        st.selectbox("🎨 Design (couleurs)", options=list(themes),
+                     format_func=lambda k: themes[k], key=theme_key)
+        if st.session_state[theme_key] != (fiche_store.load_theme(key) or "bordeaux"):
+            fiche_store.save_theme(key, st.session_state[theme_key])
+    with col3:
         st.info(
-            "💡 Modifiez la fiche ci-dessous, puis cliquez sur **💾 Enregistrer** dans sa barre "
-            "d'outils : cela télécharge un HTML **avec vos changements**, réouvrable et à nouveau "
-            "éditable. **⬇️ Exporter en PDF** télécharge directement le PDF final (A4)."
+            "💡 Cliquez un élément pour l'éditer ; **⬇️ Exporter en PDF** dans la barre d'outils "
+            "produit le PDF final (A4). Changez le **🎨 Design** pour recolorer toute la fiche."
         )
 
     _render_ai(key, cur_html, modified)
 
     st.divider()
     st.markdown("**Aperçu interactif** — essayez de cliquer sur un texte, un chiffre, un anneau :")
-    if modified:
+    if changed:
         st.caption("💾 Modifications **enregistrées** — elles restent en place même après "
-                   "rafraîchissement de la page (bouton « ↩️ Revenir au texte original » pour tout effacer).")
-    components.html(cur_html, height=f["height"], scrolling=True)
+                   "rafraîchissement de la page (design inclus).")
+    components.html(display_html, height=f["height"], scrolling=True)
 
 
 def _render_ai(key: str, cur_html: str, modified: bool) -> None:

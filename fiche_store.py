@@ -16,9 +16,29 @@ from pathlib import Path
 _DIR = Path(__file__).parent / "html_fiches" / "_saved"
 
 
+def _safe(key: str) -> str:
+    return "".join(c for c in str(key) if c.isalnum() or c in "-_") or "fiche"
+
+
 def _path(key: str) -> Path:
-    safe = "".join(c for c in str(key) if c.isalnum() or c in "-_") or "fiche"
-    return _DIR / f"{safe}.html"
+    return _DIR / f"{_safe(key)}.html"
+
+
+def load_theme(key: str) -> str | None:
+    """Thème de couleurs enregistré pour cette fiche, ou None."""
+    try:
+        p = _DIR / f"{_safe(key)}.theme"
+        return p.read_text(encoding="utf-8").strip() if p.exists() else None
+    except Exception:
+        return None
+
+
+def save_theme(key: str, theme: str) -> None:
+    try:
+        _DIR.mkdir(parents=True, exist_ok=True)
+        (_DIR / f"{_safe(key)}.theme").write_text(str(theme), encoding="utf-8")
+    except Exception:
+        pass
 
 
 def load(key: str) -> str | None:

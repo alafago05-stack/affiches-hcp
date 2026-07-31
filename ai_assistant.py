@@ -409,6 +409,71 @@ def apply_edits(html: str, edits: list[dict]) -> tuple[str, int]:
 
 
 # --------------------------------------------------------------------------- #
+#  Thèmes de couleurs (changer le design sans toucher aux données)            #
+# --------------------------------------------------------------------------- #
+import colorsys
+
+# clé -> (libellé, teinte primaire, teinte accent). None = design d'origine.
+THEMES = {
+    "bordeaux": ("🍷 Bordeaux (défaut)", None, None),
+    "bleu":     ("🌊 Bleu marine", 212, 34),
+    "vert":     ("🌿 Vert", 150, 44),
+    "violet":   ("🔮 Violet", 278, 40),
+    "sarcelle": ("💠 Sarcelle", 186, 40),
+    "rouille":  ("🔥 Rouille", 14, 40),
+    "prune":    ("🍇 Prune", 320, 30),
+}
+
+
+def theme_labels() -> dict:
+    return {k: v[0] for k, v in THEMES.items()}
+
+
+def _recolor_component(r: int, g: int, b: int, ph: float, ah: float):
+    """Décale la teinte d'une couleur de la charte (bordeaux -> primaire, or ->
+    accent) en gardant clarté/saturation. Renvoie None (inchangé) pour les
+    couleurs de données (vert/bleu/rouge), les gris et les crèmes/blancs."""
+    h, l, s = colorsys.rgb_to_hls(r / 255, g / 255, b / 255)
+    if l > 0.80:                                 # crème / blanc : garder le fond clair
+        return None
+    hue = h * 360
+    if s > 0.15 and 300 <= hue <= 360:           # bordeaux / magenta -> primaire
+        nh = ph
+    elif s > 0.22 and 18 <= hue <= 55:           # or / orange -> accent
+        nh = ah
+    else:
+        return None                              # vert/bleu/rouge (données), gris… inchangés
+    r2, g2, b2 = colorsys.hls_to_rgb((nh % 360) / 360, l, s)
+    return round(r2 * 255), round(g2 * 255), round(b2 * 255)
+
+
+_HEX_RE = re.compile(r"#([0-9a-fA-F]{6})(?![0-9a-fA-F])")
+_RGB_RE = re.compile(r"rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)")
+
+
+def recolor(html: str, theme: str) -> str:
+    """Applique un thème de couleurs à toute la fiche (hex ET rgb()), sans
+    toucher aux couleurs de données ni aux crèmes. À appliquer sur le HTML aux
+    couleurs d'origine (le thème est recalculé, jamais empilé)."""
+    conf = THEMES.get(theme)
+    if not conf or conf[1] is None:
+        return html
+    _, ph, ah = conf
+
+    def hx(m):
+        r, g, b = (int(m.group(1)[i:i + 2], 16) for i in (0, 2, 4))
+        nc = _recolor_component(r, g, b, ph, ah)
+        return ("#%02x%02x%02x" % nc) if nc else m.group(0)
+
+    def rg(m):
+        r, g, b = (int(m.group(i)) for i in (1, 2, 3))
+        nc = _recolor_component(r, g, b, ph, ah)
+        return ("rgb(%d, %d, %d)" % nc) if nc else m.group(0)
+
+    return _RGB_RE.sub(rg, _HEX_RE.sub(hx, html))
+
+
+# --------------------------------------------------------------------------- #
 #  Conversation avec Gemini                                                    #
 # --------------------------------------------------------------------------- #
 _SYSTEM = (
