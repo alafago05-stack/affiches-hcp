@@ -92,14 +92,14 @@ def render() -> None:
 
     st.divider()
     # Côte à côte : assistant IA à gauche, aperçu de la fiche à droite (live).
-    col_chat, col_fiche = st.columns([5, 7], gap="large")
+    col_chat, col_fiche = st.columns([4, 8], gap="large")
     with col_chat:
         _render_ai(key, cur_html, modified)
     with col_fiche:
         st.markdown("**🔎 Aperçu en direct**")
         if changed:
             st.caption("💾 Enregistré — persiste au rafraîchissement (design inclus).")
-        components.html(display_html, height=850, scrolling=True)
+        components.html(display_html, height=920, scrolling=True)
 
 
 def _render_ai(key: str, cur_html: str, modified: bool) -> None:
