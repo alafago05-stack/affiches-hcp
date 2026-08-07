@@ -123,7 +123,7 @@ html, body, .stApp, .stApp * { font-family: 'Inter', 'Segoe UI', sans-serif; }
         var(--bg);
     color: var(--ink);
 }
-.block-container { padding-top: 1.4rem; max-width: 1120px; }
+.block-container { padding-top: 1.4rem; padding-left: 2.2rem; padding-right: 2.2rem; max-width: 1680px; }
 h1, h2 { font-family: 'Fraunces', Georgia, serif; color: var(--ink); letter-spacing: -0.01em; font-weight: 600; }
 h3, h4, h5 { font-family: 'Inter', sans-serif; color: var(--ink); font-weight: 600; }
 #MainMenu, footer { visibility: hidden; }
