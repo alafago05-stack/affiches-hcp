@@ -1,10 +1,10 @@
-# Thème Streamlit assorti à la palette des affiches HCP (voir poster_engine.py)
+# Thème Streamlit — esprit « Claude » : crème chaud + accent corail/terracotta.
 [theme]
 base = "light"
-primaryColor = "#A3B520"
-backgroundColor = "#F7F5EC"
+primaryColor = "#D97757"
+backgroundColor = "#FAF9F5"
 secondaryBackgroundColor = "#FFFFFF"
-textColor = "#16323F"
+textColor = "#20201D"
 
 [server]
 maxUploadSize = 200

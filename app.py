@@ -98,133 +98,152 @@ POSTER_SHORT = {
 # ==========================================================================
 _CSS = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
 
-html, body, .stApp, .stApp * { font-family: 'Manrope', 'Segoe UI', sans-serif; }
-/* ne surtout pas écraser la police d'icônes Material de Streamlit,
-   sinon les icônes s'affichent en toutes lettres ("upload"...) */
+:root {
+    --bg: #FAF9F5;            /* crème chaud (esprit Claude) */
+    --surface: #FFFFFF;
+    --surface-2: #F2F0E9;     /* panneaux / barre latérale */
+    --ink: #20201D;           /* presque-noir chaud */
+    --ink-soft: #6E6B63;
+    --ink-faint: #9A968C;
+    --border: #E7E3D8;
+    --coral: #D97757;         /* accent signature */
+    --coral-dark: #BE5D3C;
+    --coral-soft: #F6E6DE;
+    --shadow: 0 1px 2px rgba(20,20,19,.04), 0 8px 24px rgba(20,20,19,.06);
+}
+
+html, body, .stApp, .stApp * { font-family: 'Inter', 'Segoe UI', sans-serif; }
+/* ne pas écraser la police d'icônes Material de Streamlit */
 [data-testid="stIconMaterial"] { font-family: 'Material Symbols Rounded' !important; }
 .stApp {
     background:
-        radial-gradient(1000px 380px at 85% -10%, rgba(163,181,32,.10), transparent 60%),
-        radial-gradient(800px 320px at -10% 0%, rgba(232,161,60,.08), transparent 55%),
-        #F7F5EC;
+        radial-gradient(1100px 420px at 90% -10%, rgba(217,119,87,.06), transparent 60%),
+        var(--bg);
+    color: var(--ink);
 }
-.block-container { padding-top: 1.6rem; max-width: 1180px; }
-h1, h2, h3 { color: #16323F; letter-spacing: -0.02em; }
+.block-container { padding-top: 1.4rem; max-width: 1120px; }
+h1, h2 { font-family: 'Fraunces', Georgia, serif; color: var(--ink); letter-spacing: -0.01em; font-weight: 600; }
+h3, h4, h5 { font-family: 'Inter', sans-serif; color: var(--ink); font-weight: 600; }
 #MainMenu, footer { visibility: hidden; }
 
-/* ---- bannière héro (reprend l'en-tête des affiches) ---- */
+/* ---- bannière héro : carte claire chaleureuse ---- */
 .hcp-hero {
-    background: linear-gradient(135deg, #16323F 0%, #1D3F4F 55%, #245063 100%);
-    border-radius: 20px; padding: 26px 30px; margin-bottom: 14px;
-    display: flex; align-items: center; justify-content: space-between; gap: 20px;
-    box-shadow: 0 10px 30px rgba(22,50,63,.22);
-    position: relative; overflow: hidden;
+    background: linear-gradient(180deg, #FFFFFF 0%, #FBFAF6 100%);
+    border: 1px solid var(--border);
+    border-radius: 22px; padding: 30px 34px; margin-bottom: 18px;
+    display: flex; align-items: center; justify-content: space-between; gap: 22px;
+    box-shadow: var(--shadow); position: relative; overflow: hidden;
 }
 .hcp-hero::after {
-    content: ""; position: absolute; right: -60px; bottom: -110px;
-    width: 300px; height: 300px; border-radius: 50%;
-    border: 26px solid rgba(163,181,32,.14);
+    content: ""; position: absolute; right: -70px; bottom: -120px;
+    width: 320px; height: 320px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(217,119,87,.12), transparent 70%);
 }
 .hcp-pill {
-    display: inline-block; background: #A3B520; color: #16323F;
-    font-weight: 800; font-size: .74rem; letter-spacing: .08em;
-    text-transform: uppercase; padding: 5px 14px; border-radius: 999px;
+    display: inline-block; background: var(--coral-soft); color: var(--coral-dark);
+    font-weight: 600; font-size: .72rem; letter-spacing: .06em;
+    text-transform: uppercase; padding: 5px 13px; border-radius: 999px;
+    border: 1px solid rgba(217,119,87,.25);
 }
-.hcp-hero h1 { color: #fff; font-size: 2.05rem; font-weight: 800; margin: .55rem 0 .25rem; }
-.hcp-hero p  { color: #B8CBD3; margin: 0; font-size: .95rem; }
+.hcp-hero h1 { font-family: 'Fraunces', Georgia, serif; color: var(--ink); font-size: 2.15rem; font-weight: 600; margin: .6rem 0 .3rem; line-height: 1.12; }
+.hcp-hero p  { color: var(--ink-soft); margin: 0; font-size: 1rem; }
 .hcp-logo-box {
-    background: #fff; border-radius: 14px; padding: 10px 14px; flex: 0 0 auto;
-    box-shadow: 0 4px 14px rgba(0,0,0,.18); z-index: 1;
+    background: #fff; border: 1px solid var(--border); border-radius: 16px; padding: 10px 14px; flex: 0 0 auto;
+    box-shadow: 0 4px 14px rgba(20,20,19,.06); z-index: 1;
 }
-.hcp-logo-box img { height: 64px; display: block; }
+.hcp-logo-box img { height: 62px; display: block; }
 
-/* ---- badges d'étape numérotés (comme les sections des affiches) ---- */
-.hcp-step { display: flex; align-items: center; gap: .65rem; margin: 1.5rem 0 .7rem; }
+/* ---- badges d'étape numérotés ---- */
+.hcp-step { display: flex; align-items: center; gap: .7rem; margin: 1.8rem 0 .8rem; }
 .hcp-step-num {
-    background: #16323F; color: #fff; font-weight: 800; font-size: .95rem;
-    width: 32px; height: 32px; border-radius: 50%; flex: 0 0 32px;
+    background: var(--coral); color: #fff; font-weight: 700; font-size: .95rem;
+    width: 34px; height: 34px; border-radius: 50%; flex: 0 0 34px;
     display: flex; align-items: center; justify-content: center;
-    box-shadow: 0 0 0 3px rgba(163,181,32,.55);
+    box-shadow: 0 4px 12px rgba(217,119,87,.32);
 }
-.hcp-step h3 { margin: 0; font-size: 1.18rem; font-weight: 800; }
+.hcp-step h3 { font-family: 'Fraunces', Georgia, serif; margin: 0; font-size: 1.3rem; font-weight: 600; }
 
 /* ---- cartes chiffrées de l'aperçu ---- */
-.hcp-metrics { display: flex; gap: 14px; flex-wrap: wrap; margin: .3rem 0 .8rem; }
+.hcp-metrics { display: flex; gap: 14px; flex-wrap: wrap; margin: .3rem 0 .9rem; }
 .hcp-card {
-    flex: 1 1 180px; background: #fff; border: 1px solid #E6E3D4;
-    border-top: 4px solid var(--c, #A3B520); border-radius: 14px;
-    padding: 14px 18px 15px; box-shadow: 0 2px 12px rgba(22,50,63,.06);
+    flex: 1 1 180px; background: var(--surface); border: 1px solid var(--border);
+    border-top: 3px solid var(--c, var(--coral)); border-radius: 14px;
+    padding: 15px 18px 16px; box-shadow: var(--shadow);
 }
-.hcp-card .lbl { font-size: .8rem; font-weight: 700; color: #6E7F87; text-transform: uppercase; letter-spacing: .04em; }
-.hcp-card .val { font-size: 2rem; font-weight: 800; color: #16323F; line-height: 1.15; }
-.hcp-card .sub { font-size: .78rem; color: #93A1A8; margin-top: 2px; }
+.hcp-card .lbl { font-size: .76rem; font-weight: 600; color: var(--ink-soft); text-transform: uppercase; letter-spacing: .05em; }
+.hcp-card .val { font-family: 'Fraunces', Georgia, serif; font-size: 2.05rem; font-weight: 600; color: var(--ink); line-height: 1.15; }
+.hcp-card .sub { font-size: .78rem; color: var(--ink-faint); margin-top: 2px; }
 .hcp-delta {
-    display: inline-block; font-size: .8rem; font-weight: 800;
+    display: inline-block; font-size: .78rem; font-weight: 600;
     padding: 2px 10px; border-radius: 999px; margin-top: 6px;
 }
-.hcp-delta.good { background: #E7F2E4; color: #2F7A33; }
-.hcp-delta.bad  { background: #F9E7E3; color: #B23A2C; }
-.hcp-delta.flat { background: #EFEFE6; color: #6E7F87; }
+.hcp-delta.good { background: #E8F0E6; color: #3B7A3F; }
+.hcp-delta.bad  { background: var(--coral-soft); color: var(--coral-dark); }
+.hcp-delta.flat { background: #EEEDE6; color: var(--ink-soft); }
 
 /* ---- choix du type d'affiche : cartes cliquables ---- */
 label[data-testid="stRadioOption"] {
-    background: #fff; border: 1.5px solid #E6E3D4; border-radius: 13px;
-    padding: 11px 16px; margin: 0 0 8px 0; width: 100%;
-    transition: border-color .15s, box-shadow .15s, background .15s;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    padding: 12px 16px; margin: 0 0 9px 0; width: 100%;
+    transition: all .15s ease;
 }
-label[data-testid="stRadioOption"]:hover { border-color: #A3B520; }
+label[data-testid="stRadioOption"]:hover { border-color: var(--coral); background: #FFFDFB; }
 label[data-testid="stRadioOption"][data-selected="true"] {
-    border-color: #A3B520; background: #F6F8E8;
-    box-shadow: 0 3px 12px rgba(163,181,32,.22);
+    border-color: var(--coral); background: var(--coral-soft);
+    box-shadow: 0 3px 12px rgba(217,119,87,.18);
 }
 
 /* ---- boutons ---- */
-.stButton > button, .stDownloadButton > button {
-    border-radius: 11px; font-weight: 800; padding: .55rem 1.5rem;
-    border: 1.5px solid #16323F; color: #16323F; background: #fff;
+.stButton button, .stDownloadButton button {
+    border-radius: 12px; font-weight: 600; padding: .55rem 1.4rem;
+    border: 1px solid var(--border); color: var(--ink); background: var(--surface);
+    transition: all .15s ease;
 }
-.stButton > button[kind="primary"], .stButton > button[data-testid="stBaseButton-primary"] {
-    background: #A3B520; border-color: #A3B520; color: #16323F;
-    box-shadow: 0 4px 14px rgba(163,181,32,.35);
+.stButton button:hover { border-color: var(--coral); color: var(--coral-dark); }
+.stButton button[kind="primary"], .stButton button[data-testid="stBaseButton-primary"] {
+    background: var(--coral); border-color: var(--coral); color: #fff;
+    box-shadow: 0 4px 14px rgba(217,119,87,.32);
 }
-.stButton > button[kind="primary"]:hover { background: #B5C72E; border-color: #B5C72E; color: #16323F; }
-.stButton > button:disabled { opacity: .45; box-shadow: none; }
-.stDownloadButton > button { background: #16323F; color: #fff; }
-.stDownloadButton > button:hover { background: #245063; color: #fff; border-color: #245063; }
+.stButton button[kind="primary"]:hover { background: var(--coral-dark); border-color: var(--coral-dark); color: #fff; }
+.stButton button:disabled { opacity: .45; box-shadow: none; }
+.stDownloadButton button { background: var(--ink); color: #fff; border-color: var(--ink); }
+.stDownloadButton button:hover { background: #000; color: #fff; border-color: #000; }
 
-/* ---- zones de dépôt, expanders, images ---- */
+/* ---- zones de dépôt, expanders, images, chat ---- */
 [data-testid="stFileUploaderDropzone"] {
-    border: 2px dashed rgba(163,181,32,.75); background: #FCFBF4; border-radius: 14px;
+    border: 1.5px dashed rgba(217,119,87,.55); background: #FBF6F3; border-radius: 14px;
 }
 [data-testid="stExpander"] {
-    background: #fff; border: 1px solid #E6E3D4 !important; border-radius: 14px !important;
-    box-shadow: 0 2px 10px rgba(22,50,63,.05);
+    background: var(--surface); border: 1px solid var(--border) !important; border-radius: 14px !important;
+    box-shadow: var(--shadow);
 }
-[data-testid="stImage"] img { border-radius: 16px; box-shadow: 0 10px 34px rgba(22,50,63,.18); }
+[data-testid="stImage"] img { border-radius: 16px; box-shadow: var(--shadow); }
+[data-testid="stChatMessage"] { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; }
+[data-testid="stNotification"], .stAlert { border-radius: 14px; }
 
-/* ---- onglets FR/AR/EN du résultat ---- */
-button[data-baseweb="tab"] { font-weight: 700; color: #6E7F87; }
-button[data-baseweb="tab"][aria-selected="true"] { color: #16323F; }
-[data-baseweb="tab-highlight"] { background-color: #A3B520; height: 3px; border-radius: 3px; }
+/* ---- onglets FR/AR/EN ---- */
+button[data-baseweb="tab"] { font-weight: 600; color: var(--ink-soft); }
+button[data-baseweb="tab"][aria-selected="true"] { color: var(--ink); }
+[data-baseweb="tab-highlight"] { background-color: var(--coral); height: 3px; border-radius: 3px; }
 
 /* ---- pied de page ---- */
 .hcp-footer {
-    text-align: center; color: #93A1A8; font-size: .8rem;
-    margin-top: 3rem; padding: 1.1rem 0 .4rem; border-top: 1px solid #E6E3D4;
+    text-align: center; color: var(--ink-faint); font-size: .8rem;
+    margin-top: 3rem; padding: 1.1rem 0 .4rem; border-top: 1px solid var(--border);
 }
 
-/* ---- barre latérale marine (comme la section Points saillants) ---- */
-[data-testid="stSidebar"] { background: #16323F; }
-[data-testid="stSidebar"] * { color: #E9EEF0; }
-[data-testid="stSidebar"] h2 { color: #fff; font-size: 1.02rem; }
-[data-testid="stSidebar"] h2::before { content: "— "; color: #A3B520; }
-[data-testid="stSidebar"] hr { border-color: rgba(255,255,255,.14); }
+/* ---- barre latérale : panneau clair chaleureux (esprit Claude) ---- */
+[data-testid="stSidebar"] { background: var(--surface-2); border-right: 1px solid var(--border); }
+[data-testid="stSidebar"] * { color: var(--ink); }
+[data-testid="stSidebar"] h2 { font-family: 'Fraunces', Georgia, serif; color: var(--ink); font-size: 1.05rem; font-weight: 600; }
+[data-testid="stSidebar"] h2::before { content: "— "; color: var(--coral); }
+[data-testid="stSidebar"] hr { border-color: var(--border); }
 [data-testid="stSidebar"] [data-testid="stImage"] img {
-    background: #fff; border-radius: 12px; padding: 8px; box-shadow: none;
+    background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 8px; box-shadow: none;
 }
-[data-testid="stSidebar"] strong { color: #C9D64A; }
+[data-testid="stSidebar"] strong { color: var(--coral-dark); }
 </style>
 """
 
