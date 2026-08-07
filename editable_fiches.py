@@ -70,8 +70,8 @@ def render() -> None:
     display_html = ai_assistant.recolor(cur_html, theme)  # ce qu'on montre/télécharge
     changed = modified or theme != "bordeaux"
 
-    col1, col2, col3 = st.columns([1.3, 1, 2])
-    with col1:
+    top1, top2, top3 = st.columns([1.3, 1, 2])
+    with top1:
         st.download_button(
             "⬇️ Télécharger" + (" (modifié)" if changed else " (vierge)"),
             data=display_html,
@@ -79,25 +79,27 @@ def render() -> None:
             mime="text/html",
             help="Ouvrez-le dans votre navigateur pour éditer en place et exporter le PDF.",
         )
-    with col2:
+    with top2:
         st.selectbox("🎨 Design (couleurs)", options=list(themes),
                      format_func=lambda k: themes[k], key=theme_key)
         if st.session_state[theme_key] != (fiche_store.load_theme(key) or "bordeaux"):
             fiche_store.save_theme(key, st.session_state[theme_key])
-    with col3:
+    with top3:
         st.info(
-            "💡 Cliquez un élément pour l'éditer ; **⬇️ Exporter en PDF** dans la barre d'outils "
-            "produit le PDF final (A4). Changez le **🎨 Design** pour recolorer toute la fiche."
+            "💡 L'assistant est à **gauche**, l'aperçu à **droite** : vos modifications "
+            "s'affichent **en direct**. **⬇️ Exporter en PDF** se trouve dans la barre d'outils de la fiche."
         )
 
-    _render_ai(key, cur_html, modified)
-
     st.divider()
-    st.markdown("**Aperçu interactif** — essayez de cliquer sur un texte, un chiffre, un anneau :")
-    if changed:
-        st.caption("💾 Modifications **enregistrées** — elles restent en place même après "
-                   "rafraîchissement de la page (design inclus).")
-    components.html(display_html, height=f["height"], scrolling=True)
+    # Côte à côte : assistant IA à gauche, aperçu de la fiche à droite (live).
+    col_chat, col_fiche = st.columns([5, 7], gap="large")
+    with col_chat:
+        _render_ai(key, cur_html, modified)
+    with col_fiche:
+        st.markdown("**🔎 Aperçu en direct**")
+        if changed:
+            st.caption("💾 Enregistré — persiste au rafraîchissement (design inclus).")
+        components.html(display_html, height=850, scrolling=True)
 
 
 def _render_ai(key: str, cur_html: str, modified: bool) -> None:
@@ -196,10 +198,12 @@ def _render_ai(key: str, cur_html: str, modified: bool) -> None:
             ("🎨 Mise en forme", "Améliore la mise en forme : mets en valeur le titre et les chiffres clés (op style, couleurs bordeaux #7a1c3f / or #c8992e)."),
         ]
         st.caption("Actions rapides :")
-        qcols = st.columns(len(QUICK))
-        for idx, ((label, prompt), col) in enumerate(zip(QUICK, qcols)):
-            if col.button(label, key=f"q_{key}_{idx}", use_container_width=True):
-                send(prompt)
+        for start in range(0, len(QUICK), 3):          # 3 par ligne (colonne étroite)
+            chunk = QUICK[start:start + 3]
+            cols = st.columns(len(chunk))
+            for j, (label, prompt) in enumerate(chunk):
+                if cols[j].button(label, key=f"q_{key}_{start + j}", use_container_width=True):
+                    send(prompt)
 
         # Zone de saisie
         with st.form(f"ai_form_{key}", clear_on_submit=True):
